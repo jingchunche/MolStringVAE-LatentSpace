@@ -4,7 +4,7 @@ processname:
 input:
   argname: data
   required: true
-voc_file: data/vocs.txt
+voc_file: data/guselfies_vocs.txt
 max_workers:
   argname: max_workers
   default: 1

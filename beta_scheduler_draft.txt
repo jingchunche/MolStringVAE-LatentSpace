@@ -1,0 +1,159 @@
+Beta Scheduler Draft Specification
+=================================
+
+This document details the exact structure that will be implemented in the upcoming
+`src/utils/beta_scheduler.py` module together with the hook integration that will be
+appended to `src/hooks.py`. Nothing in this draft touches the current source tree;
+when you confirm, these notes will be used to drive the actual code edits.
+
+1. src/utils/beta_scheduler.py
+------------------------------
+
+1.1 Module overview
+~~~~~~~~~~~~~~~~~~~
+- Provide light-weight helpers for computing the KL beta factor as a function of the
+  global training step.
+- Export a single factory `build_beta_scheduler(config, *, base_beta, max_step, logger=None)`
+  which returns a callable `step -> float`.
+- Implement two concrete strategies plus a constant fallback:
+  * Warmup: monotonic increase from `base_beta` to `beta_max` over an initial fraction
+    of total steps, with either linear or cosine easing.
+  * Cycling: repeated warmup plateaus with configurable cycle count/shape.
+
+1.2 Public API
+~~~~~~~~~~~~~~
+```
+def build_beta_scheduler(config: Optional[dict], *, base_beta: float, max_step: int,
+                         logger: Optional[logging.Logger] = None) -> Callable[[int], float]
+```
+- `config` corresponds to the YAML `scheduler` block. Accepts either a plain dict or
+  an `addict.Dict` (matching current config usage).
+- If `config` is falsy or lacks a `mode`, return a `lambda _: base_beta`.
+- Supported `mode` values:
+  * "warmup"
+  * "cycling"
+- Keys respected (case sensitive as shown):
+  * `schedule` (default="linear"; options: "linear", "cosine").
+  * `beta_max` (required, float).
+  * Warmup only: `warmup_ratio` (float in (0, 1], default=0.1).
+  * Cycling only: `num_cycles` (int > 0, default=1), `cycle_ratio` (float in (0, 1], default=0.3).
+- If any parameter is invalid (wrong type/out of range), emit a warning via `logger`
+  and return the constant scheduler.
+
+1.3 Internal helpers
+~~~~~~~~~~~~~~~~~~~~
+- `_coerce_float(value, name, logger)` / `_coerce_int` to validate YAML inputs.
+- `_linear_progress(step, span_steps)` and `_cosine_progress(step, span_steps)` to
+  compute normalized progress in [0, 1].
+- `_ensure_logger(logger)` returning a `logging.getLogger(__name__)` fallback.
+- Warmup scheduler implementation:
+  ```
+  def _build_warmup_scheduler(cfg, base_beta, max_step, logger):
+      warmup_steps = max(1, int(cfg.get('warmup_ratio', 0.1) * max_step))
+      beta_max = _coerce_float(cfg['beta_max'], 'beta_max', logger)
+      schedule = cfg.get('schedule', 'linear')
+      # compute progress according to schedule and clamp.
+      # return callable that: if step < warmup_steps => interpolate,
+      # else return beta_max.
+  ```
+- Cycling scheduler implementation:
+  ```
+  def _build_cycling_scheduler(cfg, base_beta, max_step, logger):
+      num_cycles = _coerce_int(cfg.get('num_cycles', 1), 'num_cycles', logger)
+      cycle_ratio = cfg.get('cycle_ratio', 0.3)
+      ramp = max(1, int(cycle_ratio * cycle_span))
+      # Each cycle spans ceil(max_step / num_cycles).
+      # Within the ramp portion use selected schedule from base_beta to beta_max,
+      # then hold beta_max until the cycle ends. Past max_step keep beta_max.
+  ```
+- Both helpers normalise/clip the interpolated value to be non-negative and fall back
+  to constants if `beta_max <= base_beta`.
+
+1.4 Testing hooks / utilities
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Include a `__all__ = ["build_beta_scheduler"]`.
+- Add a short module docstring describing usage.
+- Optionally expose `_VALID_SCHEDULES = {"linear", "cosine"}` for reuse.
+- All math operations stay in pure Python / `math` (no torch dependency required).
+
+1.5 Logging behaviour
+~~~~~~~~~~~~~~~~~~~~~
+- When a scheduler is successfully created, log a concise `info` message summarising
+  the configuration (mode, beta_max, ratios, etc.).
+- When a value is coerced or clamped, log a `debug` message.
+- On invalid configuration (missing beta_max, bad ratios, etc.), log a `warning`
+  stating that the constant beta fallback will be used.
+
+
+2. src/hooks.py additions
+-------------------------
+
+2.1 New hook class skeleton
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Append at file end:
+  ```
+  class KLBetaSchedulerHook(AlarmHook):
+      def __init__(self, *, module='-d_kl_factor', base_beta=None,
+                   max_step=None, scheduler=None, logger=None, **kwargs):
+          super().__init__(**kwargs)
+          self.logger = logger or logging.getLogger(__name__)
+          self.module_name = module
+          self.base_beta = float(base_beta) if base_beta is not None else None
+          self.max_step = max_step
+          self._scheduler_cfg = scheduler
+          self._schedule_fn = None
+          self._resolve_schedule()
+  ```
+- `_resolve_schedule` obtains defaults:
+  * If `self.base_beta` is `None`, read from `kwargs.get('config_beta')` passed by the
+    hook factory; otherwise default to 0.0.
+  * If `self.max_step` is falsy, fall back to `kwargs.get('max_step')` extracted from
+    the training config (`config.training.variables.$max_step`).
+  * Call `build_beta_scheduler(self._scheduler_cfg, base_beta=self.base_beta,
+    max_step=self.max_step, logger=self.logger)`.
+  * Store the resulting callable in `self._schedule_fn`.
+
+2.2 Hook invocation logic
+~~~~~~~~~~~~~~~~~~~~~~~~~
+- `ring(self, batch, model)` implementation outline:
+  1. Read `step = batch.get('step')`; if missing, emit warning and return.
+  2. Compute `beta = self._schedule_fn(step)`; ensure it is a float.
+  3. Try to fetch module instance `target = model.modules[self.module_name]` or
+     `getattr(model, self.module_name)` depending on the model API. (Plan: use
+     `model[self.module_name]` because current hooks operate on dict-like models).
+  4. If target exposes `weight`, update in-place (ensure tensor dtype matches).
+     - Use `weight.data.fill_(beta)`; same for `bias` if available.
+     - Wrap in `torch.no_grad()` context.
+  5. Record `batch['beta'] = beta` so downstream hooks/metrics can log it.
+- Robustness: if module lookup fails or lacks `weight`, log warning once and disable
+  further updates (set `self._schedule_fn = lambda _: beta` to avoid spam).
+
+2.3 Registration
+~~~~~~~~~~~~~~~~
+- Extend the global `hook_type2class` mapping near the bottom of file:
+  ```
+  hook_type2class['kl_beta_scheduler'] = KLBetaSchedulerHook
+  ```
+
+2.4 Construction wiring
+~~~~~~~~~~~~~~~~~~~~~~
+- Existing hook factory already passes the parent config dict to `AlarmHook`
+  subclasses. We will ensure `KLBetaSchedulerHook` accepts `config` keyword so that
+  the base class can store it (no extra behaviour required).
+- No change to other hooks; this addition is opt-in via YAML.
+
+
+3. YAML interaction recap
+-------------------------
+- The draft YAML from `beta_scheduler_plan.txt` remains valid, pointing
+  `training.pre_hooks.kl_beta` to the new hook type and passing the scheduler block.
+- If `scheduler` is omitted, `build_beta_scheduler` returns the constant lambda and
+  the hook simply enforces the provided `base_beta` each step.
+- Errors are surfaced via warnings but never raise; training proceeds normally with
+  constant beta fallback.
+
+
+File creation
+-------------
+- Once approved, the implementation will follow the blueprint above before being
+  added to version control.

@@ -26,11 +26,11 @@ variables:
   $pad_token: 0
   $start_token: 1
   $end_token: 2
-  $voc_size: 988
+  $voc_size: 902
   $dmodel:
     argname: dmodel
     type: int
-    default: 512
+    default: 256
   $pe_dropout:
     argname: pe_dropout
     type: float
@@ -43,7 +43,7 @@ variables:
     argname: dropout
     type: float
     default: 0.0
-voc_file: data/vocs.txt
+voc_file: data/guacamol_vocs.txt
 result_dir:
   dirname: ./decoding/results/$name
   duplicate: ask

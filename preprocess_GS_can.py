@@ -16,7 +16,7 @@ import selfies as sf
 from multiprocessing import Pool
 
 # === Grammar 初始化一次就好 ===
-grammar_file = "/home/jingchun/TransformerVAE/data/grammar.txt"
+grammar_file = "/home/jingchun/TransformerVAE/data/guacamol_grammar.txt"
 grammar = GroupGrammar.essential_set() | GroupGrammar.from_file(grammar_file)
 
 sanitize_ops = 0

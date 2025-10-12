@@ -49,7 +49,7 @@ def main(config):
 
     logger.info("Tokenizing...")
     smiles = []
-    fw = open(f"{result_dir}/smiles.txt", 'w')
+    fw = open(f"{result_dir}/selfies.txt", 'w')
     for token in tokens:
         smile = toker.detokenize(token)
         fw.write(smile+'\n')

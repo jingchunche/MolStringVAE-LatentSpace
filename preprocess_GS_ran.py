@@ -4,6 +4,7 @@ import pickle
 
 import yaml
 import numpy as np
+import copy
 
 from src.datasets.tokenizer import VocabularyTokenizer
 from src.utils.args import load_config
@@ -31,9 +32,6 @@ def process(smiles, voc_file, seed):
     tokenizer = VocabularyTokenizer(vocs)
     random_state = np.random.RandomState(seed=seed)
 
-    grammar_file = '/home/jingchun/TransformerVAE/data/guacamol_grammar.txt'
-    grammar = GroupGrammar.essential_set() | GroupGrammar.from_file(grammar_file)
-
     cans = []
     rans = []
     n_valid = 0
@@ -49,7 +47,6 @@ def process(smiles, voc_file, seed):
             can = tokenizer.tokenize(can_selfies)
 
             if len(extracted) == 0:
-                # 沒有 group，也填入相同的 canonical
                 cans.append(can)
                 rans.append(can)
                 continue
@@ -58,11 +55,13 @@ def process(smiles, voc_file, seed):
             rans.append(can)
             n = len(extracted)
             for i in range(n):
-                cans.append(can)  # canonical 一樣
-
-                extracted_r = list(extracted)
-                del extracted_r[i]
-                ran_selfies = grammar.encoder(mol, extracted_r)
+                cans.append(can) 
+                grammar_r = copy.deepcopy(grammar) 
+                grammar_r.delete_group(extracted[i][0].name) 
+                extracted_r = grammar_r.extract_groups(mol)
+                #extracted_r = list(extracted)
+                #del extracted_r[i]
+                ran_selfies = grammar_r.encoder(mol, extracted_r)
                 ran = tokenizer.tokenize(ran_selfies)
                 rans.append(ran)
 

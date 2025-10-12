@@ -17,7 +17,7 @@ variables:
   $max_len:
     argname: max_len
     type: int
-    default: 122
+    default: 325
   $dropout:
     argname: dropout
     type: float
@@ -25,7 +25,7 @@ variables:
   $dmodel:
     argname: dmodel
     type: int
-    default: 512
+    default: 256
   $pe_dropout:
     argname: pe_dropout
     type: float
@@ -34,19 +34,30 @@ variables:
     argname: dec_num_layers
     type: int
     default: 8
-  $beam_size: 4
-  $dec_type: beam
-  $voc_size: 988
+  $beam_size:
+    argname: beam_size
+    type: int
+    default: 4
   $pad_token: 0
   $start_token: 1
   $end_token: 2
-  $voc_size: 988
+  $voc_size:
+    argname: voc_size
+    type: int
+    default: 902
   $gpuid: null
-  $lsize: 512
+  $lsize:
+    argname: lsize
+    type: int
+    default: 256
   $step: 200000
   $studyname: 231020_tvae_ablations/seed0
   $training_dir: ../../training/results
   $batch_size: 128
+  $beta:
+    argname: beta
+    type: float
+    default: 0.01
 
 batch_size: $batch_size
 decode_len: $max_len
@@ -63,7 +74,7 @@ processes:
   mode: generate
   batch_size: $batch_size
   latent_size: $lsize
-- beam_size: 4
+- beam_size: $beam_size
   input:
     latent: latent
   mode: beam_init
@@ -118,7 +129,7 @@ token_accumulator:
   batch_dim: 0
   input: pred
   type: list
-voc_file: ./data/all_vocs.txt
+voc_file: ./data/guacamol_vocs.txt
 model:
   modules:
     vae:

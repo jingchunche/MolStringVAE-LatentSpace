@@ -15,15 +15,26 @@ def decode(grammar_type, data_dir):
     else:
         raise ValueError('Invalid grammar type: {}'.format(grammar_type))
 
-    data_path = os.path.join('decoding', 'results', data_dir)
+    #data_path = os.path.join('decoding', 'results', data_dir)
+    data_path = os.path.join('generation', 'results', data_dir)
     if not os.path.isdir(data_path):
         print(f"[WARNING] Path does not exist: {data_path}")
         return
 
+    #file_pairs = [
+        #('decoded_selfies1.txt', 'decoded_smiles1.txt'),
+        #('decoded_selfies2.txt', 'decoded_smiles2.txt')
+    #]
+    
+    #file_pairs = [
+        #('selfies_near.txt', 'smiles_near.txt'),
+        #('selfies_seed.txt',  'smiles_seed.txt')
+    #]
+    
     file_pairs = [
-        ('decoded_selfies1.txt', 'decoded_smiles1.txt'),
-        ('decoded_selfies2.txt', 'decoded_smiles2.txt'),
+        ('selfies.txt', 'smiles.txt')
     ]
+    
 
     for in_name, out_name in file_pairs:
         in_path  = os.path.join(data_path, in_name)
