@@ -65,35 +65,162 @@ def _build_warmup_scheduler(
         )
         return lambda _step: base_beta
 
-    warmup_ratio = float(cfg.get("warmup_ratio", 0.1))
-    if warmup_ratio <= 0:
-        logger.warning("warmup_ratio (%s) must be positive; using constant beta.", warmup_ratio)
-        return lambda _step: base_beta
-    if warmup_ratio > 1:
-        logger.warning("warmup_ratio (%s) exceeds 1.0; clamping to 1.0.", warmup_ratio)
-        warmup_ratio = 1.0
+    warmup_steps_raw = cfg.get("warmup_steps")
+    start_step = end_step = None
+    if warmup_steps_raw is not None:
+        start_step, end_step = _parse_warmup_steps(warmup_steps_raw, logger)
+        if start_step is None or end_step is None:
+            logger.warning(
+                "Invalid warmup_steps config '%s'; falling back to warmup_ratio.",
+                warmup_steps_raw,
+            )
+            start_step = end_step = None
+        else:
+            start_step = max(0, int(start_step))
+            if start_step >= max_step:
+                logger.warning(
+                    "warmup_steps start (%s) must be < max_step (%s); clamping to max_step-1.",
+                    start_step,
+                    max_step,
+                )
+                start_step = max(0, max_step - 1)
+            end_step = max(start_step + 1, int(end_step))
+            if end_step > max_step:
+                logger.warning(
+                    "warmup_steps end (%s) exceeds max_step (%s); clamping to max_step.",
+                    end_step,
+                    max_step,
+                )
+                end_step = max_step
 
-    warmup_steps = max(1, int(round(warmup_ratio * max_step)))
+    if start_step is None or end_step is None:
+        warmup_ratio_raw = cfg.get("warmup_ratio", 0.1)
+        start_ratio, end_ratio = _parse_warmup_ratios(warmup_ratio_raw, logger)
+        if start_ratio < 0:
+            logger.warning(
+                "warmup_ratio start (%s) must be >= 0; clamping to 0.",
+                start_ratio,
+            )
+            start_ratio = 0.0
+        if end_ratio <= start_ratio:
+            logger.warning(
+                "warmup_ratio end (%s) must be greater than start (%s); using constant beta.",
+                end_ratio,
+                start_ratio,
+            )
+            return lambda _step: base_beta
+        if end_ratio > 1:
+            logger.warning("warmup_ratio end (%s) exceeds 1.0; clamping to 1.0.", end_ratio)
+            end_ratio = 1.0
+
+        start_step = max(0, int(round(start_ratio * max_step)))
+        end_step = max(start_step + 1, int(round(end_ratio * max_step)))
+        span_desc = f"ratios {start_ratio}~{end_ratio}"
+    else:
+        span_desc = f"steps {start_step}~{end_step}"
+
+    ramp_steps = max(1, end_step - start_step)
     schedule_name = str(cfg.get("schedule", "linear")).strip().lower()
     schedule_fn = _get_progress_fn(schedule_name, logger)
     delta = beta_max - base_beta
 
     logger.info(
-        "Initialised KL beta warmup: base=%s max=%s steps=%s schedule=%s",
+        "Initialised KL beta warmup: base=%s max=%s span=%s schedule=%s",
         base_beta,
         beta_max,
-        warmup_steps,
+        span_desc,
         schedule_name,
     )
 
     def _schedule(step: int) -> float:
         step_idx = max(0, int(step))
-        if step_idx >= warmup_steps:
+        if step_idx < start_step:
+            return base_beta
+        if step_idx >= start_step + ramp_steps:
             return beta_max
-        progress = schedule_fn(step_idx, warmup_steps)
+        progress = schedule_fn(step_idx - start_step, ramp_steps)
         return base_beta + delta * progress
 
     return _schedule
+
+
+def _parse_warmup_ratios(value, logger: logging.Logger) -> tuple:
+    """Return (start_ratio, end_ratio) given user config.
+
+    The config can be a float (legacy behaviour), a sequence of two
+    numbers, or a string such as "0.5 0.8" / "0.5,0.8".
+    """
+
+    def _as_float(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+
+    start_ratio = 0.0
+    end_ratio = None
+
+    if isinstance(value, (list, tuple)) and value:
+        if len(value) >= 2:
+            start_ratio = _as_float(value[0]) or 0.0
+            end_ratio = _as_float(value[1])
+        else:
+            end_ratio = _as_float(value[0])
+    elif isinstance(value, str):
+        tokens = value.replace(",", " ").split()
+        if len(tokens) >= 2:
+            start_ratio = _as_float(tokens[0]) or 0.0
+            end_ratio = _as_float(tokens[1])
+        elif tokens:
+            end_ratio = _as_float(tokens[0])
+    else:
+        end_ratio = _as_float(value)
+
+    if end_ratio is None:
+        logger.warning(
+            "Invalid warmup_ratio value '%s'; defaulting to 0.1 for end ratio.",
+            value,
+        )
+        end_ratio = 0.1
+
+    return float(start_ratio), float(end_ratio)
+
+
+def _parse_warmup_steps(value, logger: logging.Logger) -> tuple:
+    """Return (start_step, end_step) parsed from user config."""
+
+    def _as_int(val):
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    start_step = 0
+    end_step = None
+
+    if isinstance(value, (list, tuple)) and value:
+        if len(value) >= 2:
+            parsed_start = _as_int(value[0])
+            start_step = parsed_start if parsed_start is not None else 0
+            end_step = _as_int(value[1])
+        else:
+            end_step = _as_int(value[0])
+    elif isinstance(value, str):
+        tokens = value.replace(",", " ").split()
+        if len(tokens) >= 2:
+            parsed_start = _as_int(tokens[0])
+            start_step = parsed_start if parsed_start is not None else 0
+            end_step = _as_int(tokens[1])
+        elif tokens:
+            end_step = _as_int(tokens[0])
+    else:
+        end_step = _as_int(value)
+
+    if end_step is None:
+        logger.warning("Invalid warmup_steps value '%s'; expected one or two integers.", value)
+        return None, None
+
+    return start_step, end_step
 
 
 def _build_cycling_scheduler(
@@ -181,5 +308,3 @@ def _cosine_progress(step: int, span: int) -> float:
         return 1.0
     ratio = min(max(float(step) / float(span), 0.0), 1.0)
     return 0.5 - 0.5 * math.cos(math.pi * ratio)
-
-
