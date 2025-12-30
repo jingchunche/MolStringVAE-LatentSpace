@@ -3,6 +3,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 try:
     import selfies
@@ -12,12 +13,32 @@ except ImportError as exc:
 
 ROOT_DIR = Path("/home/jingchun/TransformerVAE")
 RESULTS_ROOT = ROOT_DIR / "decoding" / "results"
-TARGET_PREFIX = "selfies"
-OUTPUT_PREFIX = "smiles"
+#RESULTS_ROOT = ROOT_DIR / "generation" / "results"
+
+FILE_PAIRS = [
+    ("selfies.txt", "smiles.txt"),
+]
+
+# FILE_PAIRS = [
+#     ("selfies_end1.txt", "smiles_end1.txt"),
+#     ("selfies_mid.txt",  "smiles_mid.txt"),
+#     ("selfies_end2.txt", "smiles_end2.txt"),
+# ]
+# FILE_PAIRS = [
+#     ("selfies_near.txt", "smiles_near.txt"),
+#     ("selfies_seed.txt", "smiles_seed.txt"),
+# ]
+
+def infer_output_path(src_path: Path) -> Path:
+    name = src_path.name
+    if "selfies" in name:
+        return src_path.with_name(name.replace("selfies", "smiles", 1))
+    return src_path.with_suffix(".smiles")
 
 
-def decode_file(src_path: Path) -> None:
-    dst_path = src_path.with_name(src_path.name.replace(TARGET_PREFIX, OUTPUT_PREFIX, 1))
+def decode_file(src_path: Path, dst_path: Optional[Path] = None) -> None:
+    if dst_path is None:
+        dst_path = infer_output_path(src_path)
     valid = total = 0
     with src_path.open() as fin, dst_path.open("w") as fout:
         for line in fin:
@@ -42,7 +63,17 @@ def main(arg: str) -> None:
         print(f"[ERROR] Directory not found: {target_dir}")
         sys.exit(1)
 
-    matched = sorted(target_dir.glob("selfies*.txt"))
+    if FILE_PAIRS:
+        for in_name, out_name in FILE_PAIRS:
+            src = target_dir / in_name
+            dst = target_dir / out_name
+            if not src.is_file():
+                print(f"[WARN] File not found: {src}")
+                continue
+            decode_file(src, dst)
+        return
+
+    matched = sorted(target_dir.glob("selfies_mid*.txt"))
     if not matched:
         print(f"[WARN] No SELFIES files found in {target_dir}")
         return

@@ -1,8 +1,3 @@
-"""
-LatentTransformerのfeat_evalとgenerationを統合
-
-# TODO: ディレクトリ構造を変更する。
-"""
 import sys, os
 os.environ.setdefault('TOOLS_DIR', "/workspace")
 sys.path += [os.environ["TOOLS_DIR"]]
@@ -24,7 +19,6 @@ from src.dataset import get_dataloader
 from src.datasets.tokenizer import VocabularyTokenizer
 
 def main(config):
-
     result_dir = make_result_dir(**config.result_dir)
     logger = default_logger(result_dir+"/log.txt", **config.logger)
     with open(f"{result_dir}/config.yaml", 'w') as f:
@@ -66,15 +60,6 @@ def main(config):
                 hook(batch)
             del batch
             torch.cuda.empty_cache()
-
-    # Calculate metrics
-    logger.info("Calculating metrics...")
-    if len(metrics) > 0:
-        scores = {}
-        for m in metrics: 
-            scores = m.calc(scores)
-        df_score = pd.Series(scores)
-        df_score.to_csv(f"{result_dir}/scores.csv", header=['Score'])
     
     # Save accumulated values
     logger.info("Saving accumulates...")
@@ -103,11 +88,10 @@ def main(config):
         tokenizer = VocabularyTokenizer(f.read().splitlines())
     with open(os.path.join(result_dir, "decoded_tokens.pkl"), 'rb') as f:
         tokens = pickle.load(f)
-    with open(os.path.join(result_dir, "decoded_smiles.txt"), 'w') as f:
+    with open(os.path.join(result_dir, "decoded_selfies.txt"), 'w') as f:
         for tok in tokens:
             f.write(tokenizer.detokenize(tok)+'\n')
 
 if __name__ == '__main__':
     config = load_config(config_dir="./decoding", default_configs=['base'])
     main(config)
-

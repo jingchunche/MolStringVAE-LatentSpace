@@ -1,97 +1,71 @@
+#!/usr/bin/env python3
+from rdkit import Chem
+from group_selfies import GroupGrammar
 import sys, os
-os.environ.setdefault('TOOLS_DIR', "/workspace")
-sys.path += [os.environ["TOOLS_DIR"]]
-import yaml
-import pickle
-from addict import Dict
-import numpy as np
-import pandas as pd
-import torch
-from tqdm import tqdm
-from src.utils.path import make_result_dir
-from src.utils.logger import default_logger
-from src.utils.args import load_config
-from src.models import Model
-from src.process import get_process
-from src.accumulator import get_accumulator, NumpyAccumulator, ListAccumulator
-from src.metric import get_metric
-from src.dataset import get_dataloader
-from src.datasets.tokenizer import VocabularyTokenizer
 
-def main(config):
-    result_dir = make_result_dir(**config.result_dir)
-    logger = default_logger(result_dir+"/log.txt", **config.logger)
-    with open(f"{result_dir}/config.yaml", 'w') as f:
-        yaml.dump(config.to_dict(), f, sort_keys=False)
+GRAMMAR_FILE = '/home/jingchun/TransformerVAE/data/guacamol_grammar.txt'
 
-    # Environment
-    DEVICE = torch.device('cuda', index=config.gpuid or 0) \
-        if torch.cuda.is_available() else torch.device('cpu')
-    logger.warning(f"DEVICE: {DEVICE}")
+def decode(grammar_type, data_dir):
+    if grammar_type == 'merged':
+        essential = GroupGrammar.essential_set()
+        grammar_frag = GroupGrammar.from_file(GRAMMAR_FILE)
+        merged_grammar = grammar_frag | essential
+    elif grammar_type == 'essential':
+        merged_grammar = GroupGrammar.essential_set()
+    else:
+        raise ValueError('Invalid grammar type: {}'.format(grammar_type))
+
+    #data_path = os.path.join('decoding', 'results', data_dir)
+    data_path = os.path.join('generation', 'results', data_dir)
+    if not os.path.isdir(data_path):
+        print(f"[WARNING] Path does not exist: {data_path}")
+        return
+
+    #file_pairs = [
+        #('decoded_selfies1.txt', 'decoded_smiles1.txt'),
+        #('decoded_selfies2.txt', 'decoded_smiles2.txt')
+    #]
     
-    # Prepare data
-    dl = get_dataloader(logger=logger, device=DEVICE, **config.data)
-
-    # Prepare model
-    logger.info("Preparing model...")
-    model = Model(logger, **config.model)
-    model.load(path=config.weight_path, strict=False)
-    model.to(DEVICE)
-    model.eval()
-    processes = [get_process(**p) for p in config.processes]
-
-    # Prepare hooks
-    accums = {aname: get_accumulator(logger=logger, **aconfig)
-        for aname, aconfig in config.accumulators.items()}
-    idx_accum = NumpyAccumulator(logger=logger, input='idx', org_type='np.ndarray')
-    metrics = [get_metric(logger=logger, name=mname, **mconfig) for mname, mconfig
-        in config.metrics.items()]
-    hooks = list(accums.values())+metrics+[idx_accum]
-
-    for hook in hooks:
-        hook.init()
-
-    # Iteration
-    logger.info("Iterating dataset...")
-    with torch.no_grad():
-        for batch in tqdm(dl) if config.show_tqdm else dl:
-            model(batch, processes=processes)
-            for hook in hooks:
-                hook(batch)
-            del batch
-            torch.cuda.empty_cache()
+    #file_pairs = [
+        #('selfies_near.txt', 'smiles_near.txt'),
+        #('selfies_seed.txt',  'smiles_seed.txt')
+    #]
     
-    # Save accumulated values
-    logger.info("Saving accumulates...")
-    if len(accums) > 0:
-        idxs = np.argsort(idx_accum.accumulate())
-        for aname, accum in accums.items():
-            accummed = accum.accumulate()
-            apath = f"{result_dir}/{aname}"
-            if isinstance(accum, NumpyAccumulator):
-                accummed = accummed[idxs]
-                n, size = accummed.shape
-                with open(apath+'.csv', 'w') as f:
-                    f.write(','.join([str(i) for i in range(size)])+'\n')
-                    for r in range(n):
-                        f.write(','.join(str(f) for f in accummed[r])+'\n')
-            elif isinstance(accum, ListAccumulator):
-                accummed = [accummed[i] for i in idxs]
-                with open(apath+'.pkl', 'wb') as f:
-                    pickle.dump(accummed, f)
-            else:
-                raise ValueError(f"Unsupported type of accumulate: {type(accum)}")
+    file_pairs = [
+        ('selfies.txt', 'smiles.txt')
+    ]
+    
 
-    # Decode
-    logger.info("Detokenizing...")
-    with open(config.voc_file) as f:
-        tokenizer = VocabularyTokenizer(f.read().splitlines())
-    with open(os.path.join(result_dir, "decoded_tokens.pkl"), 'rb') as f:
-        tokens = pickle.load(f)
-    with open(os.path.join(result_dir, "decoded_selfies.txt"), 'w') as f:
-        for tok in tokens:
-            f.write(tokenizer.detokenize(tok)+'\n')
+    for in_name, out_name in file_pairs:
+        in_path  = os.path.join(data_path, in_name)
+        out_path = os.path.join(data_path, out_name)
+
+        if not os.path.isfile(in_path):
+            print(f"[WARN] File not found: {in_path}")
+            continue
+
+        ok = 0
+        tot = 0
+        with open(in_path, 'r') as fin, open(out_path, 'w') as fout:
+            for line in fin:
+                s = line.rstrip('\n')
+                tot += 1
+                try:
+                    mol = merged_grammar.decoder(s)
+                    if mol is None:
+                        fout.write("INVALID\n")
+                    else:
+                        smi = Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
+                        fout.write(smi + "\n")
+                        ok += 1
+                except Exception:
+                    fout.write("INVALID\n")
+
+        print(f"[INFO] Decoded: {out_path} (valid {ok}/{tot})")
 
 if __name__ == '__main__':
-    config = load_config(config_dir="./decoding", default_configs=['base'])
-    main(config)
+    args = sys.argv[1:]
+    if len(args) != 2:
+        print('Usage: python GS_decode.py <grammar_type:{merged|essential}> <data_dir>')
+        sys.exit(1)
+    decode(args[0], args[1])
