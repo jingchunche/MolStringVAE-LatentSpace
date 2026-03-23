@@ -2,37 +2,37 @@ import logging
 import math
 from typing import Callable, Optional, Union, Mapping, Any
 
-__all__ = ["build_beta_scheduler"]
+__all__ = ["build_scheduler"]
 _VALID_SCHEDULES = {"linear", "cosine"}
 
-def build_beta_scheduler(
+def build_scheduler(
     config: Optional[Mapping[str, Any]],
     *,
-    base_beta: Union[int, float, None],
+    base_weight: Union[int, float, None],
     max_step: Optional[int],
     logger: Optional[logging.Logger] = None,
 ) -> Callable[[int], float]:
     log = logger or logging.getLogger(__name__)
-    base_value = float(base_beta) if base_beta is not None else 0.0
+    base_value = float(base_weight) if base_weight is not None else 0.0
 
     if not config:
-        log.debug("Beta scheduler not configured; using constant beta %s", base_value)
+        log.debug("Scheduler not configured; using constant value %s", base_value)
         return lambda _step: base_value
 
     if not isinstance(config, Mapping):
-        log.warning("Unsupported scheduler config type %s; using constant beta %s", type(config), base_value)
+        log.warning("Unsupported scheduler config type %s; using constant value %s", type(config), base_value)
         return lambda _step: base_value
 
     cfg = config
     mode_raw = cfg.get("mode")
     if not mode_raw:
-        log.debug("Scheduler lacks 'mode'; using constant beta %s", base_value)
+        log.debug("Scheduler lacks 'mode'; using constant value %s", base_value)
         return lambda _step: base_value
 
     mode = str(mode_raw).strip().lower()
     if max_step is None or max_step <= 0:
         log.warning(
-            "Invalid or missing max_step (%s) for beta scheduler (mode=%s); falling back to constant beta.",
+            "Invalid or missing max_step (%s) for scheduler (mode=%s); falling back to constant value.",
             max_step,
             mode,
         )
@@ -44,26 +44,26 @@ def build_beta_scheduler(
     }
     builder = builders.get(mode)
     if builder is None:
-        log.warning("Unsupported beta scheduler mode '%s'; using constant beta %s", mode_raw, base_value)
+        log.warning("Unsupported scheduler mode '%s'; using constant value %s", mode_raw, base_value)
         return lambda _step: base_value
 
     return builder(cfg, base_value, max_step, log)
 
 
 def _build_warmup_scheduler(
-    cfg: Mapping[str, Any], base_beta: float, max_step: int, logger: logging.Logger
+    cfg: Mapping[str, Any], base_weight: float, max_step: int, logger: logging.Logger
 ) -> Callable[[int], float]:
     if "beta_max" not in cfg:
-        logger.warning("Beta scheduler missing required parameter 'beta_max'.")
-        return lambda _step: base_beta
+        logger.warning("Scheduler missing required parameter 'beta_max'.")
+        return lambda _step: base_weight
     beta_max = float(cfg["beta_max"])
-    if beta_max <= base_beta:
+    if beta_max <= base_weight:
         logger.warning(
-            "beta_max (%s) must be greater than base_beta (%s) for warmup; using constant beta.",
+            "beta_max (%s) must be greater than base value (%s) for warmup; using constant value.",
             beta_max,
-            base_beta,
+            base_weight,
         )
-        return lambda _step: base_beta
+        return lambda _step: base_weight
 
     warmup_steps_raw = cfg.get("warmup_steps")
     start_step = end_step = None
@@ -104,11 +104,11 @@ def _build_warmup_scheduler(
             start_ratio = 0.0
         if end_ratio <= start_ratio:
             logger.warning(
-                "warmup_ratio end (%s) must be greater than start (%s); using constant beta.",
+                "warmup_ratio end (%s) must be greater than start (%s); using constant value.",
                 end_ratio,
                 start_ratio,
             )
-            return lambda _step: base_beta
+            return lambda _step: base_weight
         if end_ratio > 1:
             logger.warning("warmup_ratio end (%s) exceeds 1.0; clamping to 1.0.", end_ratio)
             end_ratio = 1.0
@@ -122,11 +122,11 @@ def _build_warmup_scheduler(
     ramp_steps = max(1, end_step - start_step)
     schedule_name = str(cfg.get("schedule", "linear")).strip().lower()
     schedule_fn = _get_progress_fn(schedule_name, logger)
-    delta = beta_max - base_beta
+    delta = beta_max - base_weight
 
     logger.info(
-        "Initialised KL beta warmup: base=%s max=%s span=%s schedule=%s",
-        base_beta,
+        "Initialised coefficient warmup: base=%s max=%s span=%s schedule=%s",
+        base_weight,
         beta_max,
         span_desc,
         schedule_name,
@@ -135,11 +135,11 @@ def _build_warmup_scheduler(
     def _schedule(step: int) -> float:
         step_idx = max(0, int(step))
         if step_idx < start_step:
-            return base_beta
+            return base_weight
         if step_idx >= start_step + ramp_steps:
             return beta_max
         progress = schedule_fn(step_idx - start_step, ramp_steps)
-        return base_beta + delta * progress
+        return base_weight + delta * progress
 
     return _schedule
 
@@ -227,7 +227,7 @@ def _build_cycling_scheduler(
     cfg: Mapping[str, Any], base_beta: float, max_step: int, logger: logging.Logger
 ) -> Callable[[int], float]:
     if "beta_max" not in cfg:
-        logger.warning("Beta scheduler missing required parameter 'beta_max'.")
+        logger.warning("Scheduler missing required parameter 'beta_max'.")
         return lambda _step: base_beta
     beta_max = float(cfg["beta_max"])
     if beta_max <= base_beta:
@@ -289,7 +289,7 @@ def _build_cycling_scheduler(
 
 def _get_progress_fn(name: str, logger: logging.Logger) -> Callable[[int, int], float]:
     if name not in _VALID_SCHEDULES:
-        logger.warning("Unknown beta scheduler curve '%s'; falling back to linear.", name)
+        logger.warning("Unknown scheduler curve '%s'; falling back to linear.", name)
         name = "linear"
 
     if name == "linear":

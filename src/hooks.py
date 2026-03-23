@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import torch
 from .alarm import get_alarm
-from .utils.beta_scheduler import build_beta_scheduler
+from .utils.scheduler import build_scheduler
 
 class AlarmHook:
     def __init__(self, logger, result_dir, 
@@ -126,39 +126,41 @@ class TimeAbortHook:
             batch['end'] = True
 
 
-class KLBetaSchedulerHook(AlarmHook):
-    """Adjust the KL loss weight (`-d_kl_factor`) according to a beta schedule."""
+class SchedulerHook(AlarmHook):
+    """Adjust a module weight (default: `-d_kl_factor`) according to a beta schedule."""
 
     def __init__(
         self,
         logger,
         result_dir,
         module='-d_kl_factor',
-        base_beta=None,
+        base_weight=None,
         max_step=None,
         scheduler=None,
+        batch_key: str = 'beta',
         alarm={'type': 'silent', 'target': 'step'},
         end=False,
         **kwargs,
     ):
         super().__init__(logger, result_dir, alarm=alarm, end=end, **kwargs)
         self.module_name = module
-        self.base_beta = float(base_beta) if base_beta is not None else 0.0
+        self.base_weight = float(base_weight) if base_weight is not None else 0.0
         self.max_step = max_step
         self.scheduler_config = scheduler
         self.schedule_fn = self._build_schedule()
         self.cached_module = None
+        self.batch_key = batch_key
 
     def _build_schedule(self):
         if not self.max_step:
             self.logger.warning(
-                "KLBetaSchedulerHook requires max_step; falling back to constant beta %s.",
-                self.base_beta,
+                "SchedulerHook requires max_step; falling back to constant weight %s.",
+                self.base_weight,
             )
-            return lambda _step: self.base_beta
-        return build_beta_scheduler(
+            return lambda _step: self.base_weight
+        return build_scheduler(
             self.scheduler_config,
-            base_beta=self.base_beta,
+            base_weight=self.base_weight,
             max_step=self.max_step,
             logger=self.logger,
         )
@@ -168,31 +170,31 @@ class KLBetaSchedulerHook(AlarmHook):
             return self.cached_module
         if self.module_name not in model:
             self.logger.warning(
-                "Module '%s' not found; disabling beta scheduler.",
+                "Module '%s' not found; disabling scheduler.",
                 self.module_name,
             )
-            self.schedule_fn = lambda _step: self.base_beta
+            self.schedule_fn = lambda _step: self.base_weight
             return None
         module = model[self.module_name]
         if not hasattr(module, 'weight'):
             self.logger.warning(
-                "Module '%s' has no weight parameter; disabling beta scheduler.",
+                "Module '%s' has no weight parameter; disabling scheduler.",
                 self.module_name,
             )
-            self.schedule_fn = lambda _step: self.base_beta
+            self.schedule_fn = lambda _step: self.base_weight
             return None
         self.cached_module = module
         return module
 
-    def _set_weight(self, module, beta):
+    def _set_weight(self, module, weight_value):
         weight = getattr(module, 'weight', None)
         if weight is None:
             return
         if isinstance(weight, torch.Tensor):
             with torch.no_grad():
-                weight.fill_(beta)
+                weight.fill_(weight_value)
         else:
-            module.weight = float(beta)
+            module.weight = float(weight_value)
         bias = getattr(module, 'bias', None)
         if isinstance(bias, torch.Tensor):
             with torch.no_grad():
@@ -202,14 +204,14 @@ class KLBetaSchedulerHook(AlarmHook):
 
     def ring(self, batch, model):
         if 'step' not in batch:
-            self.logger.warning("Batch missing 'step'; beta scheduler skipped.")
+            self.logger.warning("Batch missing 'step'; scheduler skipped.")
             return
         target = self._get_target(model)
         if target is None:
             return
-        beta = float(self.schedule_fn(batch['step']))
-        self._set_weight(target, beta)
-        batch['beta'] = beta
+        weight_value = float(self.schedule_fn(batch['step']))
+        self._set_weight(target, weight_value)
+        batch[self.batch_key] = weight_value
 
 
 class LossTrackerHook(AlarmHook):
@@ -283,7 +285,7 @@ hook_type2class = {
     'step_abort': StepAbortHook,
     'epoch_abort': EpochAbortHook,
     'time_abort': TimeAbortHook,
-    'kl_beta_scheduler': KLBetaSchedulerHook,
+    'scheduler_hook': SchedulerHook,
     'loss_tracker': LossTrackerHook,
 }
 def get_hook(type, **kwargs):
