@@ -20,15 +20,15 @@ variables:
   $emodel:
     argname: emodel
     type: int
-    default: 256
+    default: 512
   $pooled_size:
     argname: pooled_size
     type: int
-    default: 768 # emodel * pooling_scaler
+    default: 1536 # emodel * pooling_scaler
   $lsize:
     argname: lsize
     type: int
-    default: 256
+    default: 512
   $dropout:
     argname: dropout
     type: float
@@ -40,13 +40,16 @@ variables:
   $max_len: 
     argname: max_len
     type: int
-    default: 122
+    default: 130
   $enc_num_layers:
     argname: enc_num_layers
     type: int
     default: 8
   $pad_token: 0
-  $voc_size: 902
+  $voc_size: # num_vocs+3 
+    argname: voc_size
+    type: int
+    default: 42
   
 result_dir:
   dirname: ./featurization/results/$name
@@ -60,7 +63,7 @@ data:
       input:
         type: string
         padding_value: 0
-        path_list: ./preprocess/results/$data/can_tokens.pkl
+        path_list: ./preprocess/results/$data/one_tokens.pkl
   seed: $seed
   bucket_dset: input
   batch_size: 128
@@ -142,7 +145,13 @@ processes:
 - module: latent2mu
   input: latent_base
   output: mu
+# - module: latent2var
+#   input: latent_base
+#   output: var
 accumulators:
-  feature:
+  feature_mu:
     type: numpy
     input: mu
+  # feature_var:
+  #   type: numpy
+  #   input: var

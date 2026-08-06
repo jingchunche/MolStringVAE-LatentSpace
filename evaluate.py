@@ -1,134 +1,467 @@
+#!/usr/bin/env python3
+"""Run latent-vs-chemical neighborhood evaluation as a standalone script."""
 import argparse
+import hashlib
 import json
-import logging
-import os
-import random
-from typing import List, Optional
+import math
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 
-from guacamol.assess_distribution_learning import assess_distribution_learning
-from guacamol.distribution_matching_generator import DistributionMatchingGenerator
-from guacamol.utils.helpers import setup_default_logger
-
-
-logger = logging.getLogger(__name__)
-
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_RESULTS_ROOT = os.path.join(REPO_ROOT, 'generation', 'results')
-DEFAULT_TRAIN_FILE = os.path.join(REPO_ROOT, 'data', 'guacamol_v1_train.smiles')
-DEFAULT_FALLBACK_OUTPUT = os.path.join(REPO_ROOT, 'evaluation')
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
+from scipy.stats import pearsonr
 
 
-class PreGeneratedGenerator(DistributionMatchingGenerator):
-    """Wraps a static SMILES list so guacamol can request batches of samples."""
-
-    def __init__(self, smiles: List[str], seed: int, sample_with_replacement: bool):
-        if not smiles:
-            raise ValueError('SMILES list is empty; nothing to evaluate.')
-        self._smiles = list(smiles)
-        self._seed = seed
-        self._rng = random.Random(seed)
-        self._with_replacement = sample_with_replacement
-        self._cursor = 0
-        if not sample_with_replacement:
-            self._rng.shuffle(self._smiles)
-
-    def generate(self, number_samples: int) -> List[str]:
-        if self._with_replacement:
-            return [self._rng.choice(self._smiles) for _ in range(number_samples)]
-
-        generated = []
-        while len(generated) < number_samples:
-            remaining = number_samples - len(generated)
-            chunk = self._smiles[self._cursor:self._cursor + remaining]
-            generated.extend(chunk)
-            self._cursor += len(chunk)
-            if len(generated) < number_samples:
-                self._rng.shuffle(self._smiles)
-                self._cursor = 0
-        return generated
+ROOT = Path(__file__).resolve().parent
+EXACT_CHEMICAL_SEARCH = "exact_tanimoto_topk_bitcount_bucketed_faiss_hamming"
+ALIGNMENT_TOLERANCE = 1e-8
 
 
-def read_smiles_file(path: str, unique: bool, max_length: Optional[int]) -> List[str]:
-    with open(path, 'r') as handle:
-        smiles = [line.strip() for line in handle if line.strip()]
-    if unique:
-        seen = set()
-        deduped = []
-        for s in smiles:
-            if s not in seen:
-                seen.add(s)
-                deduped.append(s)
-        smiles = deduped
-    if max_length is not None:
-        filtered = [s for s in smiles if len(s) <= max_length]
-        removed = len(smiles) - len(filtered)
-        if removed:
-            logger.info('Dropped %d SMILES longer than max_length %d.', removed, max_length)
-        if not filtered:
-            raise ValueError('All SMILES exceed the maximum length constraint; nothing to evaluate.')
-        smiles = filtered
-    return smiles
+def sha256_file(path, chunk_size=1024 * 1024):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description='Evaluate a pre-generated SMILES set on GuacaMol distribution metrics.')
-    parser.add_argument('--name', default=None,
-                        help='Result subdirectory relative to results_root, e.g. GSran/ran/10000.')
-    parser.add_argument('--results_root', default=DEFAULT_RESULTS_ROOT,
-                        help='Root directory containing generation results (default: generation/results).')
-    parser.add_argument('--samples', default=None,
-                        help='Path to the generated SMILES file to evaluate. Overrides --name if provided.')
-    parser.add_argument('--train_file', default=DEFAULT_TRAIN_FILE,
-                        help='Training SMILES file used as reference distribution.')
-    parser.add_argument('--output_dir', default=None,
-                        help='Directory where evaluation artifacts will be written (default: same directory as samples).')
-    parser.add_argument('--suite', default='v2', help='GuacaMol benchmark suite (v1 or v2).')
-    parser.add_argument('--seed', type=int, default=0, help='Random seed for sampling.')
-    parser.add_argument('--unique', action='store_true', help='Remove duplicate SMILES before evaluation.')
-    parser.add_argument('--max_length', type=int, default=350,
-                        help='Maximum SMILES length allowed; longer entries are dropped before evaluation.')
-    parser.add_argument('--no_replacement', action='store_true',
-                        help='Sample without replacement when feeding SMILES to GuacaMol.')
-    args = parser.parse_args()
-
-    args.results_root = os.path.abspath(args.results_root)
-    args.train_file = os.path.abspath(args.train_file)
-
-    if args.samples is None:
-        if args.name is None:
-            parser.error('Either --samples or --name must be provided to locate generated SMILES.')
-        sample_dir = os.path.join(args.results_root, args.name)
-        args.samples = os.path.join(sample_dir, 'smiles.txt')
-    else:
-        sample_dir = os.path.dirname(os.path.abspath(args.samples))
-        args.samples = os.path.abspath(args.samples)
-
-    if args.output_dir is None:
-        if args.name is not None:
-            args.output_dir = os.path.join(args.results_root, args.name)
-        else:
-            args.output_dir = sample_dir or DEFAULT_FALLBACK_OUTPUT
-    args.output_dir = os.path.abspath(args.output_dir)
-
-    setup_default_logger()
-
-    smiles = read_smiles_file(args.samples, unique=args.unique, max_length=args.max_length)
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    params_path = os.path.join(args.output_dir, 'distribution_learning_params.json')
-    with open(params_path, 'w') as handle:
-        json.dump(vars(args), handle, indent=2, sort_keys=True)
-
-    generator = PreGeneratedGenerator(smiles=smiles,
-                                      seed=args.seed,
-                                      sample_with_replacement=not args.no_replacement)
-
-    json_path = os.path.join(args.output_dir, 'distribution_learning_results.json')
-    assess_distribution_learning(generator,
-                                 chembl_training_file=args.train_file,
-                                 json_output_file=json_path,
-                                 benchmark_version=args.suite)
+def load_lines(path):
+    with Path(path).open("r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
 
 
-if __name__ == '__main__':
+def load_csv_matrix(path):
+    data = np.loadtxt(str(path), delimiter=",", skiprows=1)
+    if data.ndim == 1:
+        data = data[np.newaxis, :]
+    return np.asarray(data, dtype=np.float32)
+
+
+def load_numeric(path):
+    data = np.loadtxt(str(path), dtype=float)
+    return data.reshape(1) if data.ndim == 0 else data
+
+
+def reshape_qk(values, k, name):
+    if k <= 0:
+        raise ValueError("neighbors must be positive")
+    values = np.asarray(values, dtype=float)
+    if values.ndim == 2:
+        if values.shape[1] != k:
+            raise ValueError(
+                "{} second dimension must be {}, got {}".format(name, k, values.shape)
+            )
+        return values
+    flat = values.reshape(-1)
+    if flat.size % k:
+        raise ValueError(
+            "{} length {} is not divisible by {}".format(name, flat.size, k)
+        )
+    return flat.reshape(-1, k)
+
+
+def write_lines(path, values, fmt=None):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for value in values:
+            handle.write((fmt.format(value) if fmt else str(value)) + "\n")
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {key: _json_safe(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(child) for child in value]
+    if isinstance(value, (float, np.floating)) and not math.isfinite(float(value)):
+        return None
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(_json_safe(value), handle, indent=2, sort_keys=True, allow_nan=False)
+
+
+def latent_neighbors(
+    query_vectors, train_vectors, train_smiles, k,
+    cpu=False, skip_first=False, batch_size=200000,
+):
+    import faiss
+
+    query_vectors = np.ascontiguousarray(query_vectors, dtype=np.float32)
+    train_vectors = np.ascontiguousarray(train_vectors, dtype=np.float32)
+    if query_vectors.shape[1] != train_vectors.shape[1]:
+        raise ValueError("Query/train latent dimensions differ")
+    index = faiss.IndexFlatL2(train_vectors.shape[1])
+    if not cpu and faiss.get_num_gpus() > 0:
+        index = faiss.index_cpu_to_gpu(faiss.StandardGpuResources(), 0, index)
+    for start in range(0, len(train_vectors), batch_size):
+        index.add(train_vectors[start:start + batch_size])
+    search_k = min(len(train_vectors), k + int(skip_first))
+    d2, indices = index.search(query_vectors, search_k)
+    if skip_first:
+        d2, indices = d2[:, 1:], indices[:, 1:]
+    d2, indices = d2[:, :k], indices[:, :k]
+    if indices.shape[1] != k or np.any(indices < 0):
+        raise RuntimeError("Unable to retrieve k latent neighbors for every query")
+    distances = np.sqrt(np.maximum(d2, 0.0))
+    near_smiles = [train_smiles[int(idx)] for idx in indices.reshape(-1)]
+    return indices, distances, near_smiles
+
+
+def smiles_dissimilarities(query_smiles, near_smiles, k, radius, nbits):
+    from rdkit import Chem, DataStructs
+    from rdkit.Chem import AllChem
+
+    def fingerprint(text):
+        molecule = Chem.MolFromSmiles(text)
+        if molecule is None:
+            return None
+        return AllChem.GetMorganFingerprintAsBitVect(
+            molecule, radius, nBits=nbits
+        )
+
+    query_fps = [fingerprint(text) for text in query_smiles]
+    near_fps = [fingerprint(text) for text in near_smiles]
+    result = np.empty((len(query_smiles), k), dtype=float)
+    for i, query_fp in enumerate(query_fps):
+        for j in range(k):
+            near_fp = near_fps[i * k + j]
+            result[i, j] = (
+                1.0 if query_fp is None or near_fp is None
+                else 1.0 - DataStructs.TanimotoSimilarity(query_fp, near_fp)
+            )
+    return result
+
+
+def map_smiles_to_rows(values, reference_smiles):
+    mapping = defaultdict(list)
+    for idx, text in enumerate(reference_smiles):
+        mapping[text].append(idx)
+    rows = []
+    for text in values:
+        matches = mapping.get(text)
+        if not matches:
+            raise ValueError(
+                "Chemical-neighbor SMILES not found in train set: {}".format(text)
+            )
+        rows.append(matches[0])
+    return np.asarray(rows, dtype=np.int64)
+
+
+def paired_latent_distances(query_vectors, train_vectors, indices, k):
+    blocks = train_vectors[indices.reshape(-1)].reshape(
+        len(query_vectors), k, -1
+    )
+    return np.linalg.norm(blocks - query_vectors[:, None, :], axis=2)
+
+
+def _summary(values):
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    return {
+        "mean": float(np.mean(finite)) if finite.size else float("nan"),
+        "median": float(np.median(finite)) if finite.size else float("nan"),
+        "std": float(np.std(finite)) if finite.size else float("nan"),
+        "min": float(np.min(finite)) if finite.size else float("nan"),
+        "max": float(np.max(finite)) if finite.size else float("nan"),
+        "valid_queries": int(finite.size),
+        "total_queries": int(values.size),
+    }
+
+
+def neighbor_alignment(latent_dissim, chemical_dissim, random_similarity):
+    latent_mean = np.mean(1.0 - latent_dissim, axis=1)
+    chemical_mean = np.mean(1.0 - chemical_dissim, axis=1)
+    ties = np.abs(latent_mean - chemical_mean) <= ALIGNMENT_TOLERANCE
+    latent_mean = np.where(ties, chemical_mean, latent_mean)
+    violations = latent_mean > chemical_mean + ALIGNMENT_TOLERANCE
+    if np.any(violations):
+        excess = latent_mean[violations] - chemical_mean[violations]
+        raise ValueError(
+            "Chemical reference is not exact Tanimoto top-k: "
+            "{} query/queries have latent similarity above the chemical "
+            "optimum (maximum excess {:.6g}). Rebuild the reference.".format(
+                int(np.sum(violations)), float(np.max(excess))
+            )
+        )
+    random_similarity = np.asarray(random_similarity, dtype=float).reshape(-1)
+    denominator = chemical_mean - random_similarity
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values = np.where(
+            np.abs(denominator) > 1e-12,
+            (latent_mean - random_similarity) / denominator,
+            np.nan,
+        )
+    return np.where(
+        (values > 1.0) & (values <= 1.0 + ALIGNMENT_TOLERANCE), 1.0, values
+    )
+
+
+def querywise_wasserstein(
+    latent_dissim, latent_dist, chemical_dissim, chemical_dist
+):
+    latent = np.stack([latent_dissim, latent_dist], axis=-1)
+    chemical = np.stack([chemical_dissim, chemical_dist], axis=-1)
+    pooled = np.concatenate(
+        [latent.reshape(-1, 2), chemical.reshape(-1, 2)], axis=0
+    )
+    mean = pooled.mean(axis=0)
+    std = pooled.std(axis=0) + 1e-12
+    latent = (latent - mean) / std
+    chemical = (chemical - mean) / std
+    values = np.empty(len(latent), dtype=float)
+    for idx in range(len(latent)):
+        cost = cdist(latent[idx], chemical[idx], metric="euclidean")
+        row, col = linear_sum_assignment(cost)
+        values[idx] = cost[row, col].mean()
+    return values
+
+
+def querywise_pearson(distances, dissimilarities):
+    if distances.shape != dissimilarities.shape:
+        raise ValueError("Pearson inputs must have identical shape")
+    correlation = np.full(len(distances), np.nan, dtype=float)
+    p_value = np.full(len(distances), np.nan, dtype=float)
+    for idx, (x, y) in enumerate(zip(distances, dissimilarities)):
+        mask = np.isfinite(x) & np.isfinite(y)
+        if mask.sum() < 2 or np.ptp(x[mask]) == 0 or np.ptp(y[mask]) == 0:
+            continue
+        correlation[idx], p_value[idx] = pearsonr(x[mask], y[mask])
+    return correlation, p_value
+
+
+def compute_all_metrics(
+    latent_dissim, latent_dist, chemical_dissim, chemical_dist,
+    random_similarity,
+):
+    alignment = neighbor_alignment(
+        latent_dissim, chemical_dissim, random_similarity
+    )
+    wasserstein = querywise_wasserstein(
+        latent_dissim, latent_dist, chemical_dissim, chemical_dist
+    )
+    chemical_r, chemical_p = querywise_pearson(
+        chemical_dist, chemical_dissim
+    )
+    latent_r, latent_p = querywise_pearson(latent_dist, latent_dissim)
+    return {
+        "arrays": {
+            "neighbor_alignment": alignment,
+            "querywise_wasserstein": wasserstein,
+            "chemical_pearson_r": chemical_r,
+            "chemical_pearson_p": chemical_p,
+            "latent_pearson_r": latent_r,
+            "latent_pearson_p": latent_p,
+        },
+        "summary": {
+            "mean_similarity": {
+                "latent": float(np.mean(1.0 - latent_dissim)),
+                "chemical": float(np.mean(1.0 - chemical_dissim)),
+            },
+            "mean_near_distance": {
+                "latent": float(np.mean(latent_dist)),
+                "chemical": float(np.mean(chemical_dist)),
+            },
+            "neighbor_alignment": _summary(alignment),
+            "querywise_wasserstein": _summary(wasserstein),
+            "chemical_neighbor_pearson_r": _summary(chemical_r),
+            "latent_neighbor_pearson_r": _summary(latent_r),
+        },
+    }
+
+
+def validate_reference(
+    reference_dir, train_path, query_path, neighbors, radius, nbits
+):
+    manifest_path = reference_dir / "reference_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError("Missing reference manifest: {}".format(manifest_path))
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    checks = [
+        (manifest.get("train_sha256"), sha256_file(train_path), "train SMILES checksum"),
+        (manifest.get("query_sha256"), sha256_file(query_path), "query SMILES checksum"),
+        (int(manifest.get("neighbors", -1)), neighbors, "neighbors"),
+        (int(manifest.get("radius", -1)), radius, "Morgan radius"),
+        (int(manifest.get("nbits", -1)), nbits, "Morgan nbits"),
+        (manifest.get("search_method"), EXACT_CHEMICAL_SEARCH, "chemical search method"),
+    ]
+    failures = [
+        "{}: reference={!r}, current={!r}".format(name, old, new)
+        for old, new, name in checks if old != new
+    ]
+    if failures:
+        raise ValueError(
+            "Chemical reference does not match this run:\n - "
+            + "\n - ".join(failures)
+        )
+    return manifest
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--train-csv", required=True)
+    parser.add_argument("--query-csv", required=True)
+    parser.add_argument(
+        "--train-smiles",
+        default=str(ROOT / "data" / "guacamol_v1_train.smiles"),
+    )
+    parser.add_argument(
+        "--query-smiles", default=str(ROOT / "data" / "query1.smiles")
+    )
+    parser.add_argument(
+        "--reference-dir",
+        default=None,
+        help="Default: eval_latent/reference/<query name>.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(ROOT / "evaluate" / "results"),
+        help="Default: evaluate/results.",
+    )
+    parser.add_argument("--neighbors", type=int, default=10)
+    parser.add_argument("--radius", type=int, default=2)
+    parser.add_argument("--nbits", type=int, default=2048)
+    parser.add_argument("--faiss-cpu", action="store_true")
+    parser.add_argument("--batch-size", type=int, default=200000)
+    parser.add_argument("--force", action="store_true")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    if args.reference_dir is None:
+        query_name = Path(args.query_smiles).expanduser().stem
+        if query_name.startswith("guacamol_"):
+            query_name = query_name[len("guacamol_"):]
+        args.reference_dir = str(
+            ROOT / "eval_latent" / "reference" / query_name
+        )
+    train_csv = Path(args.train_csv).expanduser().resolve()
+    query_csv = Path(args.query_csv).expanduser().resolve()
+    train_path = Path(args.train_smiles).expanduser().resolve()
+    query_path = Path(args.query_smiles).expanduser().resolve()
+    reference_dir = Path(args.reference_dir).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    if output_dir.exists() and any(output_dir.iterdir()) and not args.force:
+        raise FileExistsError(
+            "Output directory is not empty; use --force: {}".format(output_dir)
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = validate_reference(
+        reference_dir, train_path, query_path,
+        args.neighbors, args.radius, args.nbits,
+    )
+    train_smiles = load_lines(train_path)
+    query_smiles = load_lines(query_path)
+    train_vectors = load_csv_matrix(train_csv)
+    query_vectors = load_csv_matrix(query_csv)
+    if len(train_vectors) != len(train_smiles):
+        raise ValueError(
+            "train CSV rows ({}) != train SMILES ({})".format(
+                len(train_vectors), len(train_smiles)
+            )
+        )
+    if len(query_vectors) != len(query_smiles):
+        raise ValueError(
+            "query CSV rows ({}) != query SMILES ({})".format(
+                len(query_vectors), len(query_smiles)
+            )
+        )
+
+    k = args.neighbors
+    _, latent_dist, latent_near = latent_neighbors(
+        query_vectors, train_vectors, train_smiles, k,
+        cpu=args.faiss_cpu, skip_first=False, batch_size=args.batch_size,
+    )
+    latent_dissim = smiles_dissimilarities(
+        query_smiles, latent_near, k, args.radius, args.nbits
+    )
+    chemical_near = load_lines(reference_dir / "chemical_near.txt")
+    chemical_dissim = reshape_qk(
+        load_numeric(reference_dir / "chemical_dissim.txt"),
+        k, "chemical_dissim",
+    )
+    random_sim = load_numeric(
+        reference_dir / "random_sim.txt"
+    ).reshape(-1)
+    if len(chemical_near) != len(query_smiles) * k:
+        raise ValueError(
+            "chemical_near count does not equal query_count * neighbors"
+        )
+    if chemical_dissim.shape != (len(query_smiles), k):
+        raise ValueError(
+            "chemical_dissim shape mismatch: {}".format(chemical_dissim.shape)
+        )
+    if random_sim.size != len(query_smiles):
+        raise ValueError("random_sim count does not equal query count")
+
+    chemical_indices = map_smiles_to_rows(
+        chemical_near, train_smiles
+    ).reshape(len(query_smiles), k)
+    chemical_dist = paired_latent_distances(
+        query_vectors, train_vectors, chemical_indices, k
+    )
+    metrics = compute_all_metrics(
+        latent_dissim, latent_dist, chemical_dissim, chemical_dist, random_sim
+    )
+
+    write_lines(output_dir / "latent_near.txt", latent_near)
+    write_lines(
+        output_dir / "latent_near_dist.txt",
+        latent_dist.reshape(-1), "{:.10f}",
+    )
+    write_lines(
+        output_dir / "latent_near_dissim.txt",
+        latent_dissim.reshape(-1), "{:.10f}",
+    )
+    write_lines(
+        output_dir / "chemical_near_dist.txt",
+        chemical_dist.reshape(-1), "{:.10f}",
+    )
+    write_json(output_dir / "metrics.json", metrics["summary"])
+    config = vars(args).copy()
+    config.update({
+        "generated_at": datetime.now().isoformat(),
+        "train_sha256": manifest["train_sha256"],
+        "query_sha256": manifest["query_sha256"],
+        "query_count": len(query_smiles),
+        "train_count": len(train_smiles),
+    })
+    write_json(output_dir / "pipeline_config.json", config)
+
+    summary = metrics["summary"]
+    print("=== Mean similarity ===")
+    print("Latent similarity mean   : {:.10f}".format(
+        summary["mean_similarity"]["latent"]
+    ))
+    print("Chemical similarity mean : {:.10f}".format(
+        summary["mean_similarity"]["chemical"]
+    ))
+    print()
+    print("=== Mean near distance ===")
+    print("Latent near distance mean   : {:.10f}".format(
+        summary["mean_near_distance"]["latent"]
+    ))
+    print("Chemical near distance mean : {:.10f}".format(
+        summary["mean_near_distance"]["chemical"]
+    ))
+    print()
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    print("[pipeline] results: {}".format(output_dir))
+
+
+if __name__ == "__main__":
     main()

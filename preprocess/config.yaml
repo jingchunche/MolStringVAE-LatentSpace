@@ -1,19 +1,63 @@
 processname:
   argname: processname
   required: true
+
 input:
   argname: data
   required: true
-voc_file: data/guselfies_vocs.txt
-max_workers:
-  argname: max_workers
-  default: 1
-  type: int
-chunk_size: 500000
-seed:
-  argname: seed
-  default: 0
-  type: int
-enable_rdkit_warning:
-  argname: enable_rdkit_warning
-  action: store_true
+
+representation:
+  argname: representation
+  default: smiles
+  choices: [smiles, selfies, group-selfies]
+
+mode:
+  argname: mode
+  default: enum2can
+  choices: [can2can, enum2can, multi-enum2can, enum2can+can2enum]
+
+voc_file:
+  argname: voc_file
+  default: ./data/smiles_vocs.txt
+
+enumeration:
+  num_variants:
+    argname: num_variants
+    default: 2
+    type: int
+  max_attempts:
+    argname: max_attempts
+    default: 20
+    type: int
+
+group_selfies:
+  strategy:
+    argname: group_strategy
+    default: none
+    choices: [none, masking, traversal, masking+traversal]
+  grammar_file: data/group_selfies_grammar.txt
+  masking:
+    max_deleted_groups: 2
+
+output:
+  root_dir: preprocess/results
+  duplicate: ask
+  save_empty: false
+
+runtime:
+  max_workers:
+    argname: max_workers
+    default: 1
+    type: int
+  chunk_size:
+    argname: chunk_size
+    default: 500000
+    type: int
+  seed:
+    argname: seed
+    default: 0
+    type: int
+  enable_rdkit_warning:
+    argname: enable_rdkit_warning
+    action: store_true
+

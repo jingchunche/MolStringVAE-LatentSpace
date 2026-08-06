@@ -19,15 +19,10 @@ def fp_morgan_count(mol, radius=2):
     # Count-based fingerprint (SparseIntVect). Tanimoto can work on this too.
     return AllChem.GetMorganFingerprint(mol, radius=radius)
 
-def sim(a, b, metric="tanimoto"):
-    if metric == "tanimoto":
-        return DataStructs.TanimotoSimilarity(a, b)
-    elif metric == "dice":
-        return DataStructs.DiceSimilarity(a, b)
-    elif metric == "cosine":
-        return DataStructs.CosineSimilarity(a, b)
-    else:
-        raise ValueError(f"Unknown metric: {metric}")
+def sim(a, b):
+    if a is None or b is None:
+        return 0.0
+    return DataStructs.TanimotoSimilarity(a, b)
 
 def count_viol_inc(xs, tol=0.0):
     return sum(xs[i+1] < xs[i] - tol for i in range(len(xs)-1))
@@ -42,20 +37,19 @@ def nanmean(x):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("data_dir")
-    ap.add_argument("--root", default="decoding/results")
+    ap.add_argument("--root", default="interpolating/results")
     ap.add_argument("--radius", type=int, default=2)
     ap.add_argument("--nBits", type=int, default=2048)
     ap.add_argument("--use-counts", action="store_true", help="use count fingerprints instead of bits")
-    ap.add_argument("--metric", default="tanimoto", choices=["tanimoto","dice","cosine"])
     ap.add_argument("--tol", type=float, default=1e-6)
-    ap.add_argument("--out", default="similarity_summary.txt", help="output filename (saved under root/data_dir)")
+    ap.add_argument("--out", default="int_summary.txt", help="output filename (saved under root/data_dir)")
     ap.add_argument("--detail", action="store_true", help="append per-step details into the same file")
     args = ap.parse_args()
 
     root = os.path.join(args.root, args.data_dir)
-    f_e1  = os.path.join(root, "smiles_end1.txt")
-    f_e2  = os.path.join(root, "smiles_end2.txt")
-    f_mid = os.path.join(root, "smiles_mid.txt")
+    f_e1  = os.path.join(root, "end1_smiles.txt")
+    f_e2  = os.path.join(root, "end2_smiles.txt")
+    f_mid = os.path.join(root, "mid_smiles.txt")
 
     # If input missing, just fail silently with an error code (no console noise)
     if not all(os.path.isfile(p) for p in [f_e1, f_e2, f_mid]):
@@ -73,10 +67,10 @@ def main():
     # FP function & description
     if args.use_counts:
         fp_fn = lambda m: fp_morgan_count(m, radius=args.radius)
-        fp_desc = f"ECFP{args.radius} (count), metric={args.metric}"
+        fp_desc = f"ECFP{args.radius} (count), metric=tanimoto"
     else:
         fp_fn = lambda m: fp_morgan_bit(m, radius=args.radius, nBits=args.nBits)
-        fp_desc = f"ECFP{args.radius} ({args.nBits}-bit), metric={args.metric}"
+        fp_desc = f"ECFP{args.radius} ({args.nBits}-bit), metric=tanimoto"
 
     # Parse mols
     mol_e1 = [mol_from_smiles(s) for s in end1]
@@ -119,32 +113,20 @@ def main():
         # Iterate pairs
         for p in range(pairs):
             fp1, fp2 = fp_e1[p], fp_e2[p]
-            if (fp1 is None) or (fp2 is None):
-                ends_sim.append(np.nan)
-                if args.detail:
-                    for j in range(mid_num):
-                        t_rel = (j+1)/(mid_num+1)
-                        fout.write(f"{p}\t{j}\t{t_rel:.6f}\tNaN\tNaN\t0\t0\tNaN\n")
-                continue
-
-            s12 = sim(fp1, fp2, args.metric)
+            s12 = sim(fp1, fp2)
             ends_sim.append(s12)
 
             block = fp_mid[p*mid_num:(p+1)*mid_num]
             sim_to_start = []
             sim_to_end   = []
             for fpm in block:
-                if fpm is None:
-                    sim_to_start.append(np.nan)
-                    sim_to_end.append(np.nan)
-                else:
-                    sim_to_start.append(sim(fpm, fp1, args.metric))
-                    sim_to_end.append(sim(fpm, fp2, args.metric))
+                sim_to_start.append(sim(fpm, fp1))
+                sim_to_end.append(sim(fpm, fp2))
 
-            # valid mask
-            mask_valid = [not (np.isnan(a) or np.isnan(b)) for a,b in zip(sim_to_start, sim_to_end)]
-            sts = [v for v,m in zip(sim_to_start, mask_valid) if m]
-            ste = [v for v,m in zip(sim_to_end,   mask_valid) if m]
+            # Invalid molecules already have similarity 0 and remain included.
+            mask_valid = [True] * mid_num
+            sts = sim_to_start
+            ste = sim_to_end
 
             if len(sts) >= 2:
                 v_dec = count_viol_dec(sts, tol=args.tol)
@@ -158,13 +140,13 @@ def main():
                 # Spearman
                 r1, _ = spearmanr(t_valid, sts)
                 r2, _ = spearmanr(t_valid, ste)
-                rho_to_start.append(float(r1) if np.isfinite(r1) else np.nan)  # ideal ≈ -1
-                rho_to_end.append(float(r2) if np.isfinite(r2) else np.nan)    # ideal ≈ +1
+                rho_to_start.append(float(r1) if np.isfinite(r1) else 0.0)  # ideal ≈ -1
+                rho_to_end.append(float(r2) if np.isfinite(r2) else 0.0)    # ideal ≈ +1
                 # Kendall (NEW)
                 k1, _ = kendalltau(t_valid, sts)
                 k2, _ = kendalltau(t_valid, ste)
-                tau_to_start.append(float(k1) if np.isfinite(k1) else np.nan)  # ideal ≈ -1
-                tau_to_end.append(float(k2) if np.isfinite(k2) else np.nan)    # ideal ≈ +1
+                tau_to_start.append(float(k1) if np.isfinite(k1) else 0.0)  # ideal ≈ -1
+                tau_to_end.append(float(k2) if np.isfinite(k2) else 0.0)    # ideal ≈ +1
             else:
                 all_score_dec.append(np.nan)
                 all_score_inc.append(np.nan)

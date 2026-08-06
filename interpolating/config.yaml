@@ -1,0 +1,287 @@
+variables:
+  $name:
+    argname: name
+    required: true
+  $data:
+    argname: data
+    required: true
+  $weight_path:
+    argname: weight
+    required: true
+  $gpuid:
+    argname: gpuid
+    type: int
+  $seed:
+    argname: seed
+    type: int
+    default: 0
+  $emodel:
+    argname: emodel
+    type: int
+    default: 512
+  $pooled_size:
+    argname: pooled_size
+    type: int
+    default: 1536
+  $lsize:
+    argname: lsize
+    type: int
+    default: 512
+  $dropout:
+    argname: dropout
+    type: float
+    default: 0.0
+  $pe_dropout:
+    argname: pe_dropout
+    type: float
+    default: 0.0
+  $max_len:
+    argname: max_len
+    type: int
+    default: 130
+  $enc_num_layers:
+    argname: enc_num_layers
+    type: int
+    default: 8
+  $pad_token: 0
+  $voc_size:
+    argname: voc_size
+    type: int
+    default: 42
+  $batch_size:
+    argname: batch_size
+    type: int
+    default: 128
+  $num:
+    argname: num
+    type: int
+    required: true
+  $mid_num:
+    argname: mid_num
+    type: int
+    required: true
+  $start_token: 1
+  $end_token: 2
+  $voc_file:
+    argname: voc_file
+    default: data/smiles_vocs.txt
+  $dmodel:
+    argname: dmodel
+    type: int
+    default: 512
+  $dec_num_layers:
+    argname: dec_num_layers
+    type: int
+    default: 8
+featurization:
+  temp_dir: ./featurization/results
+  weight_path: $weight_path
+  data:
+    type: bucket
+    datasets:
+      datasets:
+        input:
+          type: string
+          padding_value: 0
+          path_list: ./preprocess/results/$data/one_tokens.pkl
+    seed: $seed
+    bucket_dset: input
+    batch_size: $batch_size
+    bins: []
+    bin_linspace: null
+    add_lower_margin: true
+    add_upper_margin: true
+  model:
+    modules:
+      masker:
+        type: MaskMaker
+        mask_token: $pad_token
+        dtype: bool
+        direction: equal
+      enc_embedding:
+        type: PositionalEmbedding
+        embedding:
+          num_embeddings: $voc_size
+          embedding_dim: $emodel
+          padding_idx: $pad_token
+        dropout: $pe_dropout
+        max_len: $max_len
+      encoder:
+        type: TransformerEncoder
+        layer:
+          d_model: $emodel
+          nhead: 8
+          d_ff_factor: 4
+          dropout: $dropout
+          activation: newgelu
+          layer_norm_eps: 1.0e-09
+        n_layer: $enc_num_layers
+        init:
+          self_attn.in_proj_weight: glorot_uniform
+          self_attn.in_proj_bias: zero
+          self_attn.out_proj.weight: glorot_uniform
+          self_attn.out_proj.bias: zero
+          linear1.weight:
+            type: normal
+            mean: 0.0
+            std: 0.02
+          linear1.bias: zero
+          linear2.weight:
+            type: normal
+            mean: 0.0
+            std: 0.02
+          linear2.bias: zero
+      pooler:
+        type: NoAffinePooler
+        input_size:
+        - max_len
+        - batch_size
+        - $emodel
+      latent2mu:
+        type: Tunnel
+        input_size:
+        - batch_size
+        - $pooled_size
+        layers:
+        - type: linear
+          size: $lsize
+          init:
+            bias: zero
+  processes:
+  - module: masker
+    input: input
+    output: input_padding_mask
+  - module: enc_embedding
+    input: input
+    output: input_emb
+  - module: encoder
+    input:
+    - input_emb
+    - input_padding_mask
+    output: memory
+  - type: function
+    function:
+      type: transpose
+      dim0: 0
+      dim1: 1
+    input: input_padding_mask
+    output: input_padding_mask2
+  - module: pooler
+    input:
+    - memory
+    - input_padding_mask2
+    output: latent_base
+  - module: latent2mu
+    input: latent_base
+    output: mu
+decoding:
+  voc_file: $voc_file
+  result_dir:
+    dirname: ./interpolating/results/$name
+    duplicate: ask
+  gpuid: $gpuid
+  weight_path: $weight_path
+  model:
+    modules:
+      dec_embedding:
+        type: PositionalEmbedding
+        embedding:
+          num_embeddings: $voc_size
+          embedding_dim: $dmodel
+          padding_idx: $pad_token
+        dropout: $pe_dropout
+        max_len: $max_len
+      decoder:
+        type: AttentionDecoder
+        max_len: $max_len
+        layer:
+          d_model: $dmodel
+          nhead: 8
+          dropout: $dropout
+          layer_norm_eps: 1.0e-09
+          activation: newgelu
+          d_ff_factor: 4
+        num_layers: $dec_num_layers
+        init:
+          self_attn.in_proj_weight: glorot_uniform
+          self_attn.in_proj_bias: zero
+          self_attn.out_proj.weight: glorot_uniform
+          self_attn.out_proj.bias: zero
+          linear1.weight:
+            type: normal
+            mean: 0.0
+            std: 0.02
+          linear1.bias: zero
+          linear2.weight:
+            type: normal
+            mean: 0.0
+            std: 0.02
+          linear2.bias: zero
+      dec2proba:
+        type: Tunnel
+        input_size:
+        - batch_size
+        - length
+        - $dmodel
+        layers:
+        - type: layernorm
+          args:
+            elementwise_affine: false
+        - type: linear
+          size: $voc_size
+          init:
+            bias: zero
+      dec_supporter:
+        type: GreedyDecoder
+        start_token: $start_token
+        end_token: $end_token
+  processes:
+  - module: decoder
+    mode: prepare_cell_forward
+    input:
+      latent: latent
+    output: state
+  - module: dec_supporter
+    mode: init
+    input:
+      batch_size: batch_size
+    output:
+    - cur_input
+    - greedy
+  - type: iterate
+    length: $max_len
+    processes:
+    - module: dec_embedding
+      input:
+        input: cur_input
+        position: iterate_i
+      output: cur_input
+    - module: decoder
+      mode: cell_forward
+      input:
+        tgt: cur_input
+        latent: latent
+        state: state
+        position: iterate_i
+      output:
+      - cur_output
+      - state
+    - module: dec2proba
+      input: cur_output
+    - module: dec_supporter
+      mode: add
+      input:
+        cur_proba: cur_output
+        outs: greedy
+      output:
+      - cur_input
+      - greedy
+  - module: dec_supporter
+    input: greedy
+    output: greedy
+    mode: aggregate
+  num: $num
+  mid_num: $mid_num
+  ran_seed: 42
+  data:
+    batch_size: $batch_size

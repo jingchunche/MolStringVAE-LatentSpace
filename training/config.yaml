@@ -38,29 +38,32 @@ variables:
   $pad_token: 0
   $start_token: 1
   $end_token: 2
-  $voc_size: 902
-  $opt_freq: 4
-  $scheduler_start: 3 # opt_freq-1
+  $voc_size:  # num_vocs+3 
+    argname: voc_size
+    type: int
+    default: 42
+  $opt_freq: 1
+  $scheduler_start: 0 # opt_freq-1
   $beta:
     argname: beta
     type: float
-    default: 0.01
+    default: 0.2
   $emodel:
     argname: emodel
     type: int
-    default: 256
+    default: 512
   $dmodel:
     argname: dmodel
     type: int
-    default: 256
+    default: 512
   $pooled_size:
     argname: pooled_size
     type: int
-    default: 768 # emodel *pooling_scaler
+    default: 1536 # emodel *pooling_scaler
   $lsize:
     argname: lsize
     type: int
-    default: 256
+    default: 512
   $dropout:
     argname: dropout
     type: float
@@ -80,7 +83,7 @@ variables:
   $max_len: 
     argname: max_len
     type: int
-    default: 120 # MOSES dataset
+    default: 130
 
 training:
   result_dir:
@@ -97,14 +100,14 @@ training:
           input:
             type: string
             padding_value: 0
-            path_list: ./preprocess/results/$train_data/ran_tokens.pkl
+            path_list: ./preprocess/results/$train_data/input_tokens.pkl
           target:
             type: string
             padding_value: 0
-            path_list: ./preprocess/results/$train_data/can_tokens.pkl
+            path_list: ./preprocess/results/$train_data/target_tokens.pkl
       seed: $seed
       bucket_dset: input
-      batch_size: 32
+      batch_size: 256
       bins: []
       bin_linspace: null
       add_lower_margin: true
@@ -117,14 +120,14 @@ training:
             input:
               type: string
               padding_value: 0
-              path_list: ./preprocess/results/$val_data/ran_tokens.pkl
+              path_list: ./preprocess/results/$val_data/input_tokens.pkl
             target:
               type: string
               padding_value: 0
-              path_list: ./preprocess/results/$val_data/can_tokens.pkl
+              path_list: ./preprocess/results/$val_data/target_tokens.pkl
         seed: $seed
         bucket_dset: input
-        batch_size: 32
+        batch_size: 256
         bins: []
         bin_linspace: null
         add_lower_margin: true
@@ -140,7 +143,7 @@ training:
       alarm:
         type: list
         target: step
-        list: [0, 10000, 20000, 30000, 40000, 50000, 100000, 150000, 200000, 250000, 300000, 400000, 500000, 1000000]
+        list: [10000, 20000, 30000, 40000, 50000, 100000, 150000, 200000, 250000]
       end: true
     checkpoint:
       type: checkpoint_alarm
@@ -155,7 +158,7 @@ training:
       alarm:
         type: count
         target: step
-        step: 2500
+        step: 5000
       end: True
     step_abort:
       type: step_abort
@@ -174,20 +177,38 @@ training:
           argname: warmup
           type: int
           default: 4000
+    #beta_scheduler: $delete # constant_beta
     beta_scheduler:
-      type: kl_beta_scheduler
+      type: scheduler_hook
       alarm:
         type: count
         target: step
         step: 1
       module: '-d_kl_factor'
-      base_beta: 0.0
+      base_weight: 0.0
       max_step: $max_step
+      batch_key: beta
       scheduler:
         mode: warmup
         beta_max: $beta
-        warmup_ratio: 0.2
+        warmup_steps: [0, 200000]
         schedule: cosine
+    # beta_scheduler:
+    #   type: scheduler_hook
+    #   alarm:
+    #     type: count
+    #     target: step
+    #     step: 1
+    #   module: '-d_kl_factor'
+    #   base_weight: 0.0
+    #   max_step: $max_step
+    #   batch_key: beta
+    #   scheduler:
+    #     mode: cycling
+    #     beta_max: $beta
+    #     num_cycles: 4
+    #     cycle_ratio: 0.5
+    #     schedule: cosine
     loss_tracker:
       type: accumulate
       names: ['step', 'sequencece', '-d_kl', '-d_kl_beta', 'beta']
@@ -195,8 +216,9 @@ training:
       save_alarm:
         type: count
         target: step
-        step: 1
+        step: 1000
       fname: loss
+      mode: snapshot
   regularize_loss:
     clip_grad_norm: $clip_grad_norm
     normalize: false
@@ -221,19 +243,6 @@ training:
       input: forced
       target: dec_target
       pad_token: $pad_token
-  accumulators:
-    - type: numpy
-      input: latent
-      org_type: torch.tensor
-      batch_dim: 0
-    - type: numpy
-      input: mu
-      org_type: torch.tensor
-      batch_dim: 0
-    - type: numpy
-      input: var
-      org_type: torch.tensor
-      batch_dim: 0
   init_weight: false
   init_seed: $seed
   train_loop:
@@ -283,6 +292,9 @@ training:
     input: dec_output
   - module: sequencece
     input: [dec_output, dec_target]
+    output: sequencece
+  - module: recon_factor
+    input: sequencece
     output: sequencece
   - module: -d_kl
     input: [mu, var]
@@ -455,8 +467,12 @@ model:
       type: CrossEntropyLoss
       reduction: sum
       ignore_index: $pad_token
+    recon_factor:
+      type: Affine
+      weight: 1.0
     -d_kl:
       type: MinusD_KLLoss
     -d_kl_factor:
       type: Affine
       weight: $beta
+

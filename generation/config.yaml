@@ -5,9 +5,6 @@ variables:
   $weight_path:
     argname: weight
     required: true
-  $seed_path:
-    argname: seed
-    required: true
   $n_generation:
     argname: 'n'
     type: int
@@ -19,7 +16,7 @@ variables:
   $max_len:
     argname: max_len
     type: int
-    default: 325
+    default: 130
   $dropout:
     argname: dropout
     type: float
@@ -27,7 +24,7 @@ variables:
   $dmodel:
     argname: dmodel
     type: int
-    default: 256
+    default: 512
   $pe_dropout:
     argname: pe_dropout
     type: float
@@ -43,49 +40,42 @@ variables:
   $pad_token: 0
   $start_token: 1
   $end_token: 2
-  $voc_size:
+  $voc_size: # num_vocs+3 
     argname: voc_size
     type: int
-    default: 902
+    default: 42
+  $voc_file:
+    argname: voc_file
+    default: ./data/smiles_vocs.txt
   $gpuid: null
   $lsize:
     argname: lsize
     type: int
-    default: 256
+    default: 512
   $step: 200000
   $studyname: 231020_tvae_ablations/seed0
   $training_dir: ../../training/results
   $batch_size: 128
-  $noise_std:
-    argname: noise_std
-    type: float
-    default: 0.0
-  $noise_seed:
-    argname: noise_seed
-    type: int
-    default: null
-  $seed_skiprows:
-    argname: seed_skiprows
-    type: int
-    default: 1
   $beta:
     argname: beta
     type: float
-    default: 0.01
+    default: 0.2
 
 batch_size: $batch_size
 decode_len: $max_len
-seed_file: $seed_path
-seed_skiprows: $seed_skiprows
 gpuid: $gpuid
 load:
   path: $weight_path
   strict: false
 max_workers: $max_workers
 n_generation: $n_generation
-noise_seed: $noise_seed
-noise_std: $noise_std
 processes:
+- module: vae
+  input: null
+  output: latent
+  mode: generate
+  batch_size: $batch_size
+  latent_size: $lsize
 - beam_size: $beam_size
   input:
     latent: latent
@@ -141,7 +131,7 @@ token_accumulator:
   batch_dim: 0
   input: pred
   type: list
-voc_file: ./data/guacamol_vocs.txt
+voc_file: $voc_file
 model:
   modules:
     vae:

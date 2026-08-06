@@ -49,7 +49,7 @@ def main(config):
 
     logger.info("Tokenizing...")
     smiles = []
-    fw = open(f"{result_dir}/selfies.txt", 'w')
+    fw = open(f"{result_dir}/generated_string.txt", 'w')
     for token in tokens:
         smile = toker.detokenize(token)
         fw.write(smile+'\n')
@@ -57,6 +57,6 @@ def main(config):
     fw.close()
 
 if __name__ == '__main__':
-    config = load_config(config_dir="./generation", default_configs=['base'])
+    config = load_config(config_dir="./generation", default_configs=['config'])
     main(config)
 

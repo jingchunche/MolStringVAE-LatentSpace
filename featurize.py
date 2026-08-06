@@ -93,6 +93,6 @@ def main(config):
 
 
 if __name__ == '__main__':
-    config = load_config(config_dir="./featurization", default_configs=[])
+    config = load_config(config_dir="./featurization", default_configs=['config'])
     main(config)
 

@@ -4,14 +4,13 @@ variables:
     required: true
   $max_len:
     argname: max_len
-    default: 73
+    default: 130 # ?
   $batch_size:
     argname: batch_size
     type: int
     default: 128
-  $num:
-    argname: num
-    type: int
+  $latent_path:
+    argname: latent
     required: true
   $weight_path:
     argname: weight
@@ -23,25 +22,21 @@ variables:
     argname: seed
     type: int
     default: 0
-  $knn:
-    argname: knn
-    type: int
-    required: true
-  $latent_path:
-    argname: latent
-    required: true
-  $data_path:
-    argname: data
-    required: true
-
+  
   $pad_token: 0
   $start_token: 1
   $end_token: 2
-  $voc_size: 902
+  $voc_size: # num_vocs+3 
+    argname: voc_size
+    type: int
+    default: 42
+  $voc_file:
+    argname: voc_file
+    default: data/smiles_vocs.txt
   $dmodel:
     argname: dmodel
     type: int
-    default: 256
+    default: 512
   $pe_dropout:
     argname: pe_dropout
     type: float
@@ -54,11 +49,24 @@ variables:
     argname: dropout
     type: float
     default: 0.0
-voc_file: data/guacamol_vocs.txt
+voc_file: $voc_file
 result_dir:
   dirname: ./decoding/results/$name
   duplicate: ask
 gpuid: $gpuid
+data:
+  type: normal
+  seed: $seed
+  batch_size: $batch_size
+  datasets: 
+    dfs:
+      latent:
+        filepath_or_buffer: $latent_path
+    datasets:
+      latent: 
+        type: dataframe
+        df: latent
+        dtype: float
 weight_path: $weight_path
 accumulators:
   decoded_tokens:
@@ -155,10 +163,3 @@ processes:
   input: greedy
   output: greedy
   mode: aggregate
-
-dmodel: $dmodel
-num: $num
-knn: $knn
-latent_path: $latent_path
-data_path: $data_path
-ran_seed: 42

@@ -222,5 +222,5 @@ def main(config, args=None):
         hook(batch, model)
 
 if __name__ == '__main__':
-    config = load_config("training", default_configs=[])
+    config = load_config("training", default_configs=["config"])
     main(config, sys.argv)
