@@ -1,4 +1,4 @@
-name: tvae
+name: transformervae
 channels:
   - conda-forge
 dependencies:

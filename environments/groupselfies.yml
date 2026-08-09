@@ -1,4 +1,4 @@
-name: gs_vae
+name: groupselfies
 channels:
   - conda-forge
 dependencies:

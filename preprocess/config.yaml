@@ -35,7 +35,7 @@ group_selfies:
     argname: group_strategy
     default: none
     choices: [none, masking, traversal, masking+traversal]
-  grammar_file: data/group_selfies_grammar.txt
+  grammar_file: data/gs_grammar.txt
   masking:
     max_deleted_groups: 2
 

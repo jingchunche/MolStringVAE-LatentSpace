@@ -3,7 +3,7 @@
 """Auto-detect SMILES, SELFIES, or Group SELFIES and output SMILES.
 
 This is a standalone command-line script and does not import other project
-scripts. Group SELFIES always uses the fixed grammar path below.
+scripts. Group SELFIES uses the grammar bundled in this repository.
 """
 
 import argparse
@@ -15,9 +15,7 @@ from pathlib import Path
 from rdkit import Chem, RDLogger
 
 
-GRAMMAR_FILE = Path(
-    '/home/jingchun/MolStringVAE-LatentSpace/data/group_selfies_grammar.txt'
-)
+GRAMMAR_FILE = Path(__file__).resolve().parent / 'data' / 'gs_grammar.txt'
 OUTPUT_NAMES = {
     'recon_string.txt': 'recon_smiles.txt',
     'decoded_string.txt': 'decoded_smiles.txt',

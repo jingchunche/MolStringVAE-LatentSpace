@@ -1,4 +1,4 @@
-name: guacamol_vae
+name: guacamol
 channels:
   - conda-forge
 dependencies:
