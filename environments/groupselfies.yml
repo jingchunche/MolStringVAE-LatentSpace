@@ -1,0 +1,16 @@
+name: gs_vae
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - pip
+  # Group SELFIES requires RDKit before installation.
+  - rdkit
+  - numpy
+  - pandas
+  - tqdm
+  - addict
+  - pyyaml
+  - selfies
+  - pip:
+      - git+https://github.com/aspuru-guzik-group/group-selfies.git

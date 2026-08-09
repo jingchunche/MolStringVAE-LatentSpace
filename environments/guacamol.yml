@@ -1,0 +1,8 @@
+name: guacamol_vae
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7
+  - pip
+  - pip:
+      - git+https://github.com/BenevolentAI/guacamol.git

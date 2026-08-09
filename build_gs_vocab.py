@@ -37,8 +37,16 @@ def main():
     with open(smiles_path, 'r') as f:
         for line in f:
             s = line.strip()
-            if s:
-                unique_smiles.add(s)
+            if not s:
+                continue
+
+            mol = Chem.MolFromSmiles(s)
+            if not mol:
+                continue
+
+            canonical_smi = Chem.MolToSmiles(mol, canonical=True)
+            unique_smiles.add(canonical_smi)
+
     print(f'[INFO] Unique SMILES: {len(unique_smiles)}')
 
     grammar = GroupGrammar.from_file(grammar_path)

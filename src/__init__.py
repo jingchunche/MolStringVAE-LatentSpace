@@ -1,23 +1,37 @@
-from  .models import *
+"""Project package with lazily loaded model components."""
 
-import torch.nn as nn
-for cls in [nn.MSELoss, nn.BCEWithLogitsLoss]:
-    module_type2class[cls.__name__] = cls
+__all__ = ["Model"]
 
-from .modules.tunnel import *
-for cls in [Layer, Tunnel]:
-    module_type2class[cls.__name__] = cls
 
-from .modules.sequence import *
-for cls in [TeacherForcer, MaskMaker, SelfAttentionLayer, PositionalEmbedding,
-    TransformerEncoder, AttentionDecoder, GreedyDecoder, CrossEntropyLoss]:
-    module_type2class[cls.__name__] = cls
+def __getattr__(name):
+    if name != "Model":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-from .modules.vae import *
-for cls in [VAE, MinusD_KLLoss]:
-    module_type2class[cls.__name__] = cls
+    import torch.nn as nn
 
-from .modules.poolers import *
-for cls in [MeanPooler, StartPooler, MaxPooler, MeanStartMaxPooler, 
-    MeanStartEndMaxPooler, MeanStdStartEndMaxMinPooler, NoAffinePooler]:
-    module_type2class[cls.__name__] = cls
+    from .models import Model, module_type2class
+    from .modules.poolers import (
+        MaxPooler, MeanPooler, MeanStartEndMaxPooler, MeanStartMaxPooler,
+        MeanStdStartEndMaxMinPooler, NoAffinePooler, StartPooler,
+    )
+    from .modules.sequence import (
+        AttentionDecoder, CrossEntropyLoss, GreedyDecoder, MaskMaker,
+        PositionalEmbedding, SelfAttentionLayer, TeacherForcer,
+        TransformerEncoder,
+    )
+    from .modules.tunnel import Layer, Tunnel
+    from .modules.vae import MinusD_KLLoss, VAE
+
+    classes = [
+        nn.MSELoss, nn.BCEWithLogitsLoss, Layer, Tunnel,
+        TeacherForcer, MaskMaker, SelfAttentionLayer, PositionalEmbedding,
+        TransformerEncoder, AttentionDecoder, GreedyDecoder, CrossEntropyLoss,
+        VAE, MinusD_KLLoss, MeanPooler, StartPooler, MaxPooler,
+        MeanStartMaxPooler, MeanStartEndMaxPooler,
+        MeanStdStartEndMaxMinPooler, NoAffinePooler,
+    ]
+    for cls in classes:
+        module_type2class[cls.__name__] = cls
+
+    globals()["Model"] = Model
+    return Model
