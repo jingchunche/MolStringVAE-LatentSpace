@@ -1,6 +1,4 @@
-# MolStringVAE-LatentSpace
-
-This document describes how to set up the environments, prepare the data, train the models, run inference, and reproduce the evaluation workflow.
+This document provides instructions for setting up the required environments, preparing molecular datasets, training Transformer-based variational autoencoders with SMILES, SELFIES, and Group SELFIES representations, running inference tasks such as generation, reconstruction, and latent-space interpolation, and reproducing the latent-space evaluation workflows.
 
 This project is derived from [TransformerVAE](https://github.com/mizuno-group/TransformerVAE) and integrates [Group SELFIES](https://github.com/aspuru-guzik-group/group-selfies) and [GuacaMol](https://github.com/BenevolentAI/guacamol).
 
