@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run latent-vs-chemical neighborhood evaluation as a standalone script."""
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -11,7 +12,6 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
-from scipy.stats import pearsonr
 
 
 ROOT = Path(__file__).resolve().parent
@@ -90,6 +90,36 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         json.dump(_json_safe(value), handle, indent=2, sort_keys=True, allow_nan=False)
+
+
+def write_query_metrics(path, query_smiles, arrays):
+    """Write one metrics row per query, preserving the input query order."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    query_count = len(query_smiles)
+    columns = list(arrays)
+    normalized = {}
+    for name in columns:
+        values = np.asarray(arrays[name], dtype=float).reshape(-1)
+        if values.size != query_count:
+            raise ValueError(
+                "Query metric {} has {} values; expected {}".format(
+                    name, values.size, query_count
+                )
+            )
+        normalized[name] = values
+
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["query_index", "query_smiles"] + columns)
+        for idx, smiles in enumerate(query_smiles):
+            row = [idx, smiles]
+            for name in columns:
+                value = normalized[name][idx]
+                row.append(
+                    "" if not np.isfinite(value) else "{:.17g}".format(value)
+                )
+            writer.writerow(row)
 
 
 def latent_neighbors(
@@ -228,19 +258,6 @@ def querywise_wasserstein(
     return values
 
 
-def querywise_pearson(distances, dissimilarities):
-    if distances.shape != dissimilarities.shape:
-        raise ValueError("Pearson inputs must have identical shape")
-    correlation = np.full(len(distances), np.nan, dtype=float)
-    p_value = np.full(len(distances), np.nan, dtype=float)
-    for idx, (x, y) in enumerate(zip(distances, dissimilarities)):
-        mask = np.isfinite(x) & np.isfinite(y)
-        if mask.sum() < 2 or np.ptp(x[mask]) == 0 or np.ptp(y[mask]) == 0:
-            continue
-        correlation[idx], p_value[idx] = pearsonr(x[mask], y[mask])
-    return correlation, p_value
-
-
 def compute_all_metrics(
     latent_dissim, latent_dist, chemical_dissim, chemical_dist,
     random_similarity,
@@ -251,18 +268,14 @@ def compute_all_metrics(
     wasserstein = querywise_wasserstein(
         latent_dissim, latent_dist, chemical_dissim, chemical_dist
     )
-    chemical_r, chemical_p = querywise_pearson(
-        chemical_dist, chemical_dissim
-    )
-    latent_r, latent_p = querywise_pearson(latent_dist, latent_dissim)
     return {
         "arrays": {
+            "latent_mean_similarity": np.mean(1.0 - latent_dissim, axis=1),
+            "chemical_mean_similarity": np.mean(1.0 - chemical_dissim, axis=1),
+            "latent_mean_near_distance": np.mean(latent_dist, axis=1),
+            "chemical_mean_near_distance": np.mean(chemical_dist, axis=1),
             "neighbor_alignment": alignment,
             "querywise_wasserstein": wasserstein,
-            "chemical_pearson_r": chemical_r,
-            "chemical_pearson_p": chemical_p,
-            "latent_pearson_r": latent_r,
-            "latent_pearson_p": latent_p,
         },
         "summary": {
             "mean_similarity": {
@@ -275,8 +288,6 @@ def compute_all_metrics(
             },
             "neighbor_alignment": _summary(alignment),
             "querywise_wasserstein": _summary(wasserstein),
-            "chemical_neighbor_pearson_r": _summary(chemical_r),
-            "latent_neighbor_pearson_r": _summary(latent_r),
         },
     }
 
@@ -430,6 +441,9 @@ def main():
     write_lines(
         output_dir / "chemical_near_dist.txt",
         chemical_dist.reshape(-1), "{:.10f}",
+    )
+    write_query_metrics(
+        output_dir / "query_metrics.csv", query_smiles, metrics["arrays"]
     )
     write_json(output_dir / "metrics.json", metrics["summary"])
     config = vars(args).copy()
