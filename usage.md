@@ -266,3 +266,8 @@ python evaluate.py \
 - The `voc_size`, `voc_file`, model dimensions, and checkpoint must match for a given model.
 - SELFIES and Group SELFIES output must be translated back to SMILES before evaluation.
 - `duplicate: ask` requests interactive confirmation when a result directory already exists.
+
+## Acknowledgements
+
+The original implementation was developed by Yasuhiro Yoshikai, Tadahaya Mizuno, Shumpei Nemoto, and Hiroyuki Kusuhara. This repository extends the original code to compare SMILES, SELFIES, and Group SELFIES
+representations and to evaluate their learned latent spaces. The original copyright and MIT License notices are retained in [LICENSE](LICENSE) and [src/LICENSE](src/LICENSE).
