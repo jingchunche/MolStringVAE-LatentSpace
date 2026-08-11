@@ -127,6 +127,8 @@ Generated strings are saved to `generation/results/<name>/generated_string.txt`.
 `recon.py` estimates the latent posterior mean for each input molecule and then decodes it:
 
 ```sh
+conda activate transformervae
+
 python recon.py \
   --name smiles_enum2can \
   --data smiles_enum2can/test \
@@ -142,6 +144,8 @@ Reconstructed strings are saved to `recon/results/<name>/recon_string.txt`.
 `featurize.py` exports the estimated posterior mean as the latent descriptor of each molecule:
 
 ```sh
+conda activate transformervae
+
 python featurize.py \
   --name smiles_enum2can/train \
   --data smiles_enum2can/train \
@@ -158,6 +162,8 @@ python featurize.py \
 `decode.py` decodes latent variables stored in CSV format into molecular strings:
 
 ```sh
+conda activate transformervae
+
 python decode.py \
   --name smiles_enum2can \
   --latent featurization/results/smiles_enum2can/feature_mu.csv \
@@ -171,6 +177,8 @@ Decoded strings are saved to `decoding/results/<name>/decoded_string.txt`.
 ## Latent-space interpolation
 
 ```sh
+conda activate transformervae
+
 python interpolate.py \
   --name smiles_enum2can \
   --data smiles_enum2can/test \
@@ -193,12 +201,6 @@ conda activate groupselfies
 python translate.py generation/results/<name> --format smiles
 python translate.py recon/results/<name> --format selfies
 python translate.py interpolating/results/<name> --format group-selfies
-```
-
-Specify an output file when translating a single file with a nonstandard name:
-
-```sh
-python translate.py input.txt --output output.smiles --format selfies
 ```
 
 ## Evaluation
