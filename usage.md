@@ -220,7 +220,7 @@ python eval_gen.py <name> \
 Convert the model output to SMILES before running:
 
 ```sh
-conda activate groupselfies
+conda activate transformervae
 
 python eval_recon.py <name>
 python eval_int.py <name>
