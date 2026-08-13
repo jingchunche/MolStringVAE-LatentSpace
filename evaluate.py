@@ -329,7 +329,7 @@ def parse_args():
         default=str(ROOT / "data" / "guacamol_v1_train.smiles"),
     )
     parser.add_argument(
-        "--query-smiles", default=str(ROOT / "data" / "query1.smiles")
+        "--query-smiles", default=str(ROOT / "data" / "guacamol_v1_test_query.smiles")
     )
     parser.add_argument(
         "--reference-dir",
