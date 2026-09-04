@@ -35,10 +35,7 @@ data/guacamol_v1_all.smiles
 data/guacamol_v1_test_query.smiles
 ```
 
-- The GuacaMol training, validation, and test files are the official predefined splits.
-- `guacamol_v1_all.smiles` is the complete merged GuacaMol dataset.
-- `guacamol_v1_test_query.smiles` is a query set randomly sampled from `guacamol_v1_test.smiles` for latent-space retrieval.
-- These files are not tracked by Git because of their sizes and are available on [Google Drive](https://drive.google.com/drive/folders/152a5dwmuLWihjh5G-As5-j9mumAQJOJr?usp=sharing). Place the downloaded files in `data/`, or replace the paths in the commands with their actual locations.
+- The models were trained on the [GuacaMol](https://github.com/BenevolentAI/guacamol) dataset. `data/guacamol_v1_test_query.smiles` is a query set randomly sampled from `guacamol_v1_test.smiles` for latent-space retrieval.
 - The SMILES row order must remain identical to the row order of the corresponding latent CSV.
 - Vocabulary files are provided in `data/` for SMILES (`smiles_vocs.txt`, `voc_size=42`), SELFIES (`selfies_vocs.txt`, `voc_size=110`), and Group SELFIES (`gs_vocs.txt`, `voc_size=1700`), including PAD, START, and END tokens.
 
