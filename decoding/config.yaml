@@ -44,7 +44,7 @@ variables:
   $dec_num_layers:
     argname: dec_num_layers
     type: int
-    default: 8
+    default: 6
   $dropout:
     argname: dropout
     type: float

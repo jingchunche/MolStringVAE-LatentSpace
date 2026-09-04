@@ -42,7 +42,7 @@ variables:
   $enc_num_layers:
     argname: enc_num_layers
     type: int
-    default: 8
+    default: 6
   $pad_token: 0
   $voc_size:
     argname: voc_size
@@ -64,7 +64,7 @@ variables:
   $dec_num_layers:
     argname: dec_num_layers
     type: int
-    default: 8
+    default: 6
 featurization:
   temp_dir: ./featurization/results
   weight_path: $weight_path

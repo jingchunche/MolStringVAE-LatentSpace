@@ -7,7 +7,6 @@ scripts. Group SELFIES uses the grammar bundled in this repository.
 """
 
 import argparse
-import math
 import shutil
 import sys
 from pathlib import Path
@@ -61,7 +60,7 @@ def parse_args():
         default='default',
         help=(
             'Semantic constraint mode: default keeps the original decoder '
-            'behavior; no uses unlimited bonding capacities.'
+            'behavior; no uses effectively unlimited bonding capacities.'
         ),
     )
     return parser.parse_args()
@@ -82,10 +81,9 @@ def set_constraint_mode(module, mode):
     if mode == 'default':
         module.set_semantic_constraints('default')
         return
-
     constraints = module.get_semantic_constraints()
-    unrestricted = {key: math.inf for key in constraints}
-    unrestricted['?'] = math.inf
+    unrestricted = {key: sys.maxsize for key in constraints}
+    unrestricted['?'] = sys.maxsize
     module.set_semantic_constraints(unrestricted)
 
 

@@ -75,11 +75,11 @@ variables:
   $enc_num_layers:
     argname: enc_num_layers
     type: int
-    default: 8
+    default: 6
   $dec_num_layers:
     argname: dec_num_layers
     type: int
-    default: 8
+    default: 6
   $max_len: 
     argname: max_len
     type: int

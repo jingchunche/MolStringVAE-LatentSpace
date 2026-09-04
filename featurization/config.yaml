@@ -44,7 +44,7 @@ variables:
   $enc_num_layers:
     argname: enc_num_layers
     type: int
-    default: 8
+    default: 6
   $pad_token: 0
   $voc_size: # num_vocs+3 
     argname: voc_size
