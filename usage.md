@@ -16,13 +16,6 @@ conda env create -f environments/guacamol.yml
 - `groupselfies`: preprocessing and conversion of SMILES, SELFIES, and Group SELFIES strings.
 - `guacamol`: GuacaMol distribution-learning evaluation.
 
-Run all commands from the repository root:
-
-```sh
-cd /path/to/MolStringVAE-LatentSpace
-export PYTHONPATH="${PYTHONPATH:-}:$(pwd)"
-```
-
 ## Data
 
 Each input file is a plain-text SMILES file without a header and contains one molecule per line. The experiments use the following files:
@@ -62,7 +55,7 @@ python build_gs_vocab.py \
 
 ## Data preprocessing for training
 
-Before training, convert and tokenize the SMILES strings. The following example prepares SMILES for an enum-to-canonical experiment:
+Before training, convert and tokenize the molecular strings. The following example prepares SMILES for an enum-to-canonical experiment:
 
 ```sh
 conda activate groupselfies
@@ -72,8 +65,7 @@ python preprocess.py \
   --data data/guacamol_v1_train.smiles \
   --representation smiles \
   --mode enum2can \
-  --voc_file data/smiles_vocs.txt \
-  --num_variants 2
+  --voc_file data/smiles_vocs.txt 
 ```
 
 - `<processname>` can be any name. Results are saved to `preprocess/results/<processname>/`.
@@ -96,9 +88,7 @@ python train.py \
   --voc_size 42
 ```
 
-- `<name>` can be any experiment name.
-- Models and training logs are saved to `training/results/<name>/`.
-- The default maximum number of training steps is 250000.
+- `<name>` can be any name. Results are saved to `training/results/<name>/`.
 - Use the matching `voc_size` when changing the molecular representation.
 - Pretrained weights are available on [Google Drive](https://drive.google.com/drive/folders/152a5dwmuLWihjh5G-As5-j9mumAQJOJr?usp=sharing).
 
@@ -235,36 +225,27 @@ conda activate transformervae
 python evaluate/build_reference.py \
   --train-smiles data/guacamol_v1_train.smiles \
   --query-smiles data/guacamol_v1_test_query.smiles \
-  --output-dir evaluate/reference/guacamol_v1_test_query
+  --output-dir evaluate/reference/test_query
 
 python evaluate.py \
   --train-csv featurization/results/<name>/train/feature_mu.csv \
   --query-csv featurization/results/<name>/query/feature_mu.csv \
   --train-smiles data/guacamol_v1_train.smiles \
   --query-smiles data/guacamol_v1_test_query.smiles \
-  --reference-dir evaluate/reference/guacamol_v1_test_query \
+  --reference-dir evaluate/reference/test_query \
   --output-dir evaluate/results/<name>
 ```
 
 - The training and query SMILES must match the row counts and row order of their respective latent CSV files.
 - GPU FAISS is used by default. Add `--faiss-cpu` to force CPU execution.
 - `metrics.json` stores metrics aggregated across queries.
-- `query_metrics.csv` contains one row per query with the following columns:
-  - `query_index`
-  - `query_smiles`
-  - `latent_mean_similarity`
-  - `chemical_mean_similarity`
-  - `latent_mean_near_distance`
-  - `chemical_mean_near_distance`
-  - `neighbor_alignment`
-  - `querywise_wasserstein`
+- `query_metrics.csv` contains one row per query, recording its SMILES, similarity and distance metrics, neighbor alignment, and Wasserstein distance.
 
 ## Notes
 
 - Most YAML paths are relative. Run commands from the repository root.
 - The `voc_size`, `voc_file`, model dimensions, and checkpoint must match for a given model.
 - SELFIES and Group SELFIES output must be translated back to SMILES before evaluation.
-- `duplicate: ask` requests interactive confirmation when a result directory already exists.
 
 ## Acknowledgements
 
