@@ -90,7 +90,7 @@ python train.py \
 
 - `<name>` can be any name. Results are saved to `training/results/<name>/`.
 - Use the matching `voc_size` when changing the molecular representation.
-- Pretrained weights are available on [Google Drive](https://drive.google.com/drive/folders/152a5dwmuLWihjh5G-As5-j9mumAQJOJr?usp=sharing).
+- Pretrained weights are available on [Zenodo](https://doi.org/10.5281/zenodo.22304527).
 
 ## Molecule generation
 
