@@ -10,7 +10,7 @@ This repository provides the code used to preprocess molecular strings, train Tr
 
 The project is derived from [TransformerVAE](https://github.com/mizuno-group/TransformerVAE) and integrates [Group SELFIES](https://github.com/aspuru-guzik-group/group-selfies) and [GuacaMol](https://github.com/BenevolentAI/guacamol).
 
-The GuacaMol pretrained model weights are available on [Google Drive](https://drive.google.com/drive/folders/152a5dwmuLWihjh5G-As5-j9mumAQJOJr?usp=sharing).
+The GuacaMol pretrained model weights are available on [Zenodo](https://doi.org/10.5281/zenodo.22304527).
 
 ---
 
